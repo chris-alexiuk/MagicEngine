@@ -76,6 +76,8 @@ describe('the attacks made and the damage dealt this turn, each with what it was
     if (g.pending) g = settle(act(g, { type: 'choose', player: 'alice', answer: { kind: 'discard', objects: [card] } } as never));
     expect(discards(g)).toEqual([{ id: card, zcc: g.objects[card]!.zcc, player: 'alice' }]);
     expect(g.objects[card]!.zone).toBe('graveyard');
+    // Which object it became and whose — not what card it is: no question asks.
+    expect(g.history!.find((h) => h.e.type === 'discarded')!.was).toMatchObject({ id: card, controller: 'alice', owner: 'alice', types: [], printed: [] });
   });
 
   it('a creature attacking face down: nothing in the history says which card it is', () => {

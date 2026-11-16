@@ -152,9 +152,10 @@ function entries(g: GameState, events: GameEvent[]): Happening[] {
         }
         break;
       case 'discarded': {
-        // The card as the object it became (mayhem, CR 702.187b: "if you discarded it this turn").
+        // The card as the object it became (mayhem, CR 702.187b: "if you discarded it this turn"): which object, and
+        // whose. What card it is isn't kept — no question asks, and it needn't be where everyone can see it.
         const o = g.objects[e.object];
-        list.push(o ? { e, was: asItIs(g, o, chars(g, o), e.player) } : { e });
+        list.push(o ? { e, was: { id: o.id, zcc: o.zcc, controller: e.player, owner: o.owner, token: Boolean(o.token), types: [], subtypes: [], supertypes: [], printed: [] } } : { e });
         break;
       }
       case 'life':
