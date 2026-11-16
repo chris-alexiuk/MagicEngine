@@ -791,6 +791,7 @@
   "702.183a": "Tiered is a static ability found on some modal spells (see rule 700.2) that applies while the spell is on the stack. Tiered means “Choose one. As an additional cost to cast this spell, pay the cost associated with that mode.”",
   "702.184": "Station",
   "702.184a": "Station is an activated ability. “Station” means “Tap another untapped creature you control: Put a number of charge counters on this permanent equal to the tapped creature’s power. Activate only as a sorcery.”",
+  "702.185": "Warp",
   "702.185a": "Warp represents two static abilities that function while the card with warp is on the stack, one of which may create a delayed triggered ability. “Warp [cost]” means “You may cast this card from your hand by paying [cost] rather than its mana cost” and “If this spell’s warp cost was paid, exile the permanent this spell becomes at the beginning of the next end step. Its owner may cast this card after the current turn has ended for as long as it remains exiled.” Casting a spell for its warp cost follows the rules for paying alternative costs in rules 601.2b and 601.2f–h.",
   "702.185c": "Some effects refer to whether “a spell was warped this turn.” This means that a spell was cast for its warp cost this turn.",
   "702.186b": "“∞ — [Ability]” means “As long as this permanent is harnessed, it has [ability].” See rule 701.64, “Harness.”",

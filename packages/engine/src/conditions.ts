@@ -5,7 +5,7 @@ import { amountOf, refObjects, refPlayers } from './resolve.js';
 import type { GameEvent, GameObject, GameState, LKIStats, ObjectId, PlayerId } from './types.js';
 import { faceOf, livePlayers, manaValueOf, meldPartners, nameOf, notePlusCounters, pairedPartner, zoneList } from './zones.js';
 import { isRingBearer } from './ring.js';
-import { countHappened, crimes, descended, loyaltyActivated, searchedOwn, type Asked } from './history.js';
+import { castMatches, casts, countHappened, crimes, descended, lifeChanged, loyaltyActivated, otherCasts, searchedOwn, type Asked } from './history.js';
 
 /** Condition tags the engine evaluates (schema CORE_NODES.conditions). */
 export const CONDITION_TYPES: readonly string[] = [
@@ -15,32 +15,24 @@ export const CONDITION_TYPES: readonly string[] = [
 ];
 
 /**
- * What the game keeps count of during a turn: sums, marks on objects and "the first time this turn". (What moved, was
- * made, was sacrificed or was done by a player is asked of the turn's history instead: history.ts.)
+ * What the game keeps count of during a turn: damage, attacks, marks on objects and "the first time this turn". (What
+ * moved, was made, was sacrificed or was done by a player, the spells cast and the life gained and lost are asked of
+ * the turn's history instead: history.ts.)
  */
 export interface TurnLog {
   attacked: PlayerId[];
-  gainedLife: PlayerId[];
-  lostLife: PlayerId[];
-  /** How much life each player gained / lost this turn (Haliya: "if you've gained 3 or more life this turn"). */
-  lifeGained?: Record<PlayerId, number>;
-  lifeLost?: Record<PlayerId, number>;
   /** Combat phases begun this turn (Genji Glove: "if it's the first combat phase of the turn"). */
   combatPhases?: number;
   /** Damage dealt to each player this turn (Spinerock Knoll). */
   damageTaken?: Record<PlayerId, number>;
   /** Chandra's Incinerator: the noncombat part of it. */
   noncombatDamageTaken?: Record<PlayerId, number>;
-  spellsCast: Record<PlayerId, number>;
-  /** The spells cast this turn, by whom ("can't cast more than one noncreature spell each turn"). */
-  castSpells?: { player: PlayerId; id: ObjectId; zcc?: number; from?: string; mv?: number }[];
   /** Valiant Rescuer: the cycling abilities activated this turn, in order (who, which card, the stack entry). */
   cycled?: { player: PlayerId; source: ObjectId; entry: string }[];
   /** Whispering Snitch: the players who've surveilled this turn. */
   surveilled?: PlayerId[];
   /** Forge Anew: the players who activated an equip ability this turn. */
   equipped?: PlayerId[];
-  noncreatureCast: PlayerId[];
   /** Active players who have drawn in this turn's draw step ("except the first one you draw in each of your draw steps"). */
   drawStepDrew?: PlayerId[];
   /** Cards the active player has actually drawn in this turn's draw step (Orcish Bowmasters). */
@@ -55,12 +47,8 @@ export interface TurnLog {
   entered?: Record<PlayerId, ObjectId[]>;
   /** What each of them was as it entered — for a token that has since left and ceased to exist (CR 704.5d). */
   enteredAs?: Record<ObjectId, { types: string[]; subtypes: string[]; supertypes: string[]; token?: true }>;
-  /** CR 702.185c: a spell was warped this turn. */
-  warped?: boolean;
   /** Who has targeted each object this turn (valiant: "for the first time each turn"). */
   targeted?: Record<ObjectId, PlayerId[]>;
-  /** CR 700.14: mana each player has spent to cast spells this turn. */
-  manaSpent?: Record<PlayerId, number>;
   /** The sources that dealt damage to each permanent this turn. */
   damagedBy?: Record<ObjectId, ObjectId[]>;
   /** Spear of Heliod: the sources (id:zcc) that dealt damage to each player this turn (combat damage marked "c:"). */
@@ -98,12 +86,15 @@ export interface TurnLog {
 }
 
 export function newTurnLog(): TurnLog {
-  return { attacked: [], gainedLife: [], lostLife: [], spellsCast: {}, noncreatureCast: [], damagedPlayers: [], drawn: {} };
+  return { attacked: [], damagedPlayers: [], drawn: {} };
 }
 
-/** Records the events of one batch in the turn log. */
 /** How far into each event list the turn log has recorded (the rest happened during the resolution still under way). */
 export const loggedUpTo = new WeakMap<GameEvent[], number>();
+/** The events of a list not recorded yet: what the spell or ability now resolving has done so far. */
+export const unrecorded = (events: GameEvent[]): GameEvent[] => events.slice(loggedUpTo.get(events) ?? 0);
+
+/** Records the events of one batch in the turn log. */
 
 export function logTurnEvents(g: GameState, events: GameEvent[]): void {
   const log = g.turnLog;
@@ -146,18 +137,6 @@ export function logTurnEvents(g: GameState, events: GameEvent[]): void {
           } else log.attackedPlayers[a.attacker] = { zcc: o.zcc, players: [a.target.player] };
         }
         break;
-      case 'life':
-        if (e.delta > 0 && !log.gainedLife.includes(e.player)) {
-          log.gainedLife.push(e.player);
-          e.firstGain = true;
-        }
-        if (e.delta < 0 && !log.lostLife.includes(e.player)) {
-          log.lostLife.push(e.player);
-          e.firstLoss = true;
-        }
-        if (e.delta > 0) (log.lifeGained ??= {})[e.player] = (log.lifeGained[e.player] ?? 0) + e.delta;
-        if (e.delta < 0) (log.lifeLost ??= {})[e.player] = (log.lifeLost[e.player] ?? 0) - e.delta;
-        break;
       case 'counters': {
         const o = g.objects[e.object];
         if (o && e.delta > 0) (log.firstCounters ??= {})[`${o.id}:${o.zcc}`] ??= e;
@@ -195,14 +174,9 @@ export function logTurnEvents(g: GameState, events: GameEvent[]): void {
         break;
       }
       case 'cast': {
-        log.spellsCast[e.player] = (log.spellsCast[e.player] ?? 0) + 1;
+        // The names of the spells each player has cast, all game long ("a spell with the same name as one you've cast").
         const o = g.objects[e.object];
-        // Call Forth the Tempest: its mana value as it was cast (CR 202.3e: X counts on the stack).
-        (log.castSpells ??= []).push({ player: e.player, id: e.object, ...(o ? { zcc: o.zcc, mv: manaValueOf(g, o), ...(o.cast?.from ? { from: o.cast.from } : {}) } : {}) });
         if (o) ((g.castNames ??= {})[e.player] ??= []).push(nameOf(g, o));
-        const face = o ? g.cards[o.card]?.faces[o.face] : undefined;
-        if (face && !face.types.includes('Creature') && !log.noncreatureCast.includes(e.player)) log.noncreatureCast.push(e.player);
-        if (o?.cast?.paid?.includes('warp')) log.warped = true;
         break;
       }
     }
@@ -608,7 +582,7 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
     case 'happened': {
       const [you] = cond.of ? refPlayers(ctx, cond.of as Ref) : [controller];
       if (!you) return false;
-      const n = countHappened(g, cond as unknown as Asked, you, ctx.events.slice(loggedUpTo.get(ctx.events) ?? 0));
+      const n = countHappened(g, cond as unknown as Asked, you, unrecorded(ctx.events));
       return cond.min === undefined && cond.max === undefined ? n > 0 : cmp(n, cond);
     }
     // Boomerang Basics: "If you controlled that permanent" — its controller as the spell began to resolve.
@@ -698,8 +672,12 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
       // First Response: "if you lost life last turn" — the previous turn's log (none before the first turn).
       const log = cond.lastTurn ? g.lastTurnLog : g.turnLog;
       if (!log) return false;
-      // (What a player did — a crime, a search, a loyalty ability, descending — is asked of the turn's history.)
+      // (What a player did — a spell cast, a crime, a search, a loyalty ability, descending — and the life gained and
+      // lost are asked of the turn's history: with what the spell or ability now resolving has done, CR 608.2h.)
       const last = Boolean(cond.lastTurn);
+      const fresh = last ? undefined : unrecorded(ctx.events);
+      const cast = () => casts(g, last, fresh);
+      const about = { controller, source: source ?? null };
       switch (cond.event) {
         case 'opponent_damaged': {
           // Antagonism: "unless one of their opponents was dealt damage this turn" — that player's opponents.
@@ -721,38 +699,34 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
         case 'anyone_attacked':
           return log.attacked.length > 0;
         case 'you_gained_life':
-          return log.gainedLife.includes(controller);
+          return lifeChanged(g, 1, last, fresh).includes(controller);
         case 'you_activated_loyalty':
           return loyaltyActivated(g, last).includes(controller);
         case 'opponent_gained_life':
-          return log.gainedLife.some((p) => p !== controller);
+          return lifeChanged(g, 1, last, fresh).some((p) => p !== controller);
         case 'opponent_cast':
           // "If an opponent cast a blue spell this turn" — any one opponent.
-          return livePlayers(g).some(
-            (p) =>
-              p !== controller &&
-              (log.castSpells ?? []).filter((c) => c.player === p && g.objects[c.id] && (!cond.filter || matchesFilter(g, g.objects[c.id]!, cond.filter as ObjectFilter, { controller, source: source ?? null, anyZone: true }))).length >= Number(cond.min ?? 1),
-          );
+          return livePlayers(g).some((p) => p !== controller && cast().filter((c) => c.player === p && castMatches(g, c, cond.filter as ObjectFilter | undefined, about)).length >= Number(cond.min ?? 1));
         case 'opponent_drew':
           return Object.entries(log.drawn ?? {}).some(([p, n]) => p !== controller && n >= Number(cond.min ?? 1));
         case 'opponent_lost_life':
-          return log.lostLife.some((p) => p !== controller);
+          return lifeChanged(g, -1, last, fresh).some((p) => p !== controller);
         case 'you_cast_noncreature':
-          return log.noncreatureCast.includes(controller);
+          // A noncreature spell as it was cast: a permanent card cast face down is a creature spell (CR 708.4).
+          return cast().some((c) => c.player === controller && c.spell && !c.was.types.includes('Creature'));
         case 'you_cast_spell':
           // Surge (CR 702.117a): "if you … have cast another spell this turn".
-          return (log.spellsCast[controller] ?? 0) > 0;
+          return cast().some((c) => c.player === controller);
         // Lyse Hext: "if you've cast two or more noncreature spells this turn"
         // Canyon Crab: "if you haven't cast a spell from your hand this turn" (`from`).
         case 'you_cast': {
           // Dream Thief: "if you've cast another blue spell this turn" (`other`) — not the spell this source was.
           // Rhino, Barreling Brute: "a spell with mana value 4 or greater" — as it was cast (its X counted, CR 202.3e).
-          const { manaValue: mv, ...rest } = (cond.filter ?? {}) as ObjectFilter;
-          const mvOk = (n: number) => !mv || typeof mv.n !== 'number' || ({ le: n <= mv.n, ge: n >= mv.n, eq: n === mv.n, lt: n < mv.n, gt: n > mv.n } as Record<string, boolean>)[mv.op]!;
-          return (log.castSpells ?? []).filter((c) => c.player === controller && (!cond.other || c.id !== source?.id) && (!cond.from || c.from === cond.from) && g.objects[c.id] && mvOk(c.mv ?? 0) && (!cond.filter || matchesFilter(g, g.objects[c.id]!, rest, { controller, source: source ?? null, anyZone: true }))).length >= Number(cond.min ?? 1);
+          const mine = (cond.other ? otherCasts(cast(), source, ctx.sourceZcc) : cast()).filter((c) => c.player === controller);
+          return mine.filter((c) => (!cond.from || c.from === cond.from) && castMatches(g, c, cond.filter as ObjectFilter | undefined, about)).length >= Number(cond.min ?? 1);
         }
         case 'you_lost_life':
-          return log.lostLife.includes(controller);
+          return lifeChanged(g, -1, last, fresh).includes(controller);
         // Spellpyre Phoenix: "if you cycled two or more cards this turn".
         case 'you_cycled':
           return (log.cycled ?? []).filter((c) => c.player === controller).length >= Number(cond.min ?? 1);
@@ -769,7 +743,7 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
             return !types.length || types.some((t) => have.includes(t));
           });
         case 'warped':
-          return Boolean(log.warped);
+          return cast().some((c) => c.warped);
         case 'you_committed_crime':
           return crimes(g, last).includes(controller);
         // Wave of Rats: "When this creature dies, if it dealt combat damage to a player this turn" — this object, on the
@@ -788,9 +762,10 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
       }
     }
     case 'spells_last_turn': {
-      const counts = Object.values(g.lastTurnSpells);
-      if (cond.max !== undefined) return counts.reduce((a, b) => a + b, 0) <= Number(cond.max);
-      return counts.some((n) => n >= Number(cond.perPlayerMin));
+      // Werewolves: "if no spells were cast last turn", "if a player cast two or more spells last turn".
+      const cast = casts(g, true);
+      if (cond.max !== undefined) return cast.length <= Number(cond.max);
+      return [...new Set(cast.map((c) => c.player))].some((p) => cast.filter((c) => c.player === p).length >= Number(cond.perPlayerMin));
     }
     case 'counters': {
       // "if it had no -1/-1 counters on it" asks about the object as it last existed on the battlefield (CR 603.10a).

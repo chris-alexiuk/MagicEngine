@@ -5,6 +5,7 @@ import { chars, creatureTypesOf, filterZones, hasHexproofFrom, hasKeyword, hasPr
 import { RulesError, type GameObject, type GameState, type PlayerId, type StackEntry, type Target, type TargetPrompt, type TargetRef, type TargetsRelation, type TriggerInfo } from './types.js';
 import { playerProtectedFrom, playerRule } from './player-rules.js';
 import { faceOf, livePlayers, manaValueOf, nameOf, zoneList } from './zones.js';
+import { lifeChange } from './history.js';
 
 /**
  * Targeting (CR 115). `source` is the object the spell or ability comes from: the
@@ -41,7 +42,7 @@ export function checkingOnResolution<T>(fn: () => T): T {
 
 /** Rix Maadi Guildmage: "target player who lost life this turn"; Keeper of the Flame: "who has more life than you do". */
 function playerWhoOk(g: GameState, controller: PlayerId, who: NonNullable<TargetSpec['who']>, player: PlayerId, source: GameObject | null): boolean {
-  if (who.lostLife && !((g.turnLog.lifeLost?.[player] ?? 0) > 0)) return false;
+  if (who.lostLife && !(lifeChange(g, player, -1) > 0)) return false;
   if (who.attacked && !g.turnLog.attacked.includes(player)) return false;
   if (who.damagedBySource && !resolving && !(source && (g.turnLog.playerDamagedBy?.[player] ?? []).some((k) => k.replace(/^c:/, '') === `${source.id}:${source.zcc}`))) return false;
   // Hope of Ghirapur sacrifices itself as it's activated: what it did this turn stays done (CR 608.2b).

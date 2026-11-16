@@ -95,7 +95,6 @@ export function createGame(opts: NewGameOptions): { state: GameState; events: Ga
     delayed: [],
     prevention: [],
     turnLog: newTurnLog(),
-    lastTurnSpells: {},
     winner: null,
     over: false,
     rng: opts.seed | 0,

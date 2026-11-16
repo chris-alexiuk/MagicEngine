@@ -1,7 +1,7 @@
 import type { Amount, AmountExpr, EffectNode, ObjectFilter, Ref } from '@mtg/schema';
 import { chars, colorsAmong, creatureTypesOf, filterZones, hasType, matchesFilter, power, toughness } from './characteristics.js';
-import { enteredThisTurn, loggedUpTo } from './conditions.js';
-import { countHappened } from './history.js';
+import { enteredThisTurn, unrecorded } from './conditions.js';
+import { castMatches, castOf, casts, countHappened, lifeChange, otherCasts, ownCast } from './history.js';
 import { runEffect, type EffectContext } from './registry.js';
 import { checkingOnResolution, isLegalTarget, targetingAs, withPriorTargets, withTargetX, withTriggerInfo } from './targets.js';
 import type { ChoiceAnswer, DamageRecipient, GameEvent, GameObject, GameState, ObjectId, PlayerId, Resolution, StackEntry, TargetRef } from './types.js';
@@ -219,7 +219,7 @@ export function refPlayers(ctx: EffectContext, ref: Ref): PlayerId[] {
         (p) =>
           (ref.who === 'each' || p !== of) &&
           !not.includes(p) &&
-          (!ref.lostLife || (g.turnLog.lifeLost?.[p] ?? 0) > 0) &&
+          (!ref.lostLife || lifeChange(g, p, -1, false, unrecorded(ctx.events)) > 0) &&
           // Liliana, Waker of the Dead: "Each opponent who can't [discard a card] loses 3 life."
           (!ref.discardedNone || (ctx.resolution?.discarded?.[p] ?? 0) === 0) &&
           // Thornbow Archer: "each opponent who doesn't control an Elf".
@@ -471,7 +471,7 @@ function count(ctx: EffectContext, e: AmountExpr): number {
       return livePlayers(g).filter(
         (p) =>
           (e.who === 'each' || p !== ctx.controller) &&
-          (!e.lostLife || (g.turnLog.lifeLost?.[p] ?? 0) > 0) &&
+          (!e.lostLife || lifeChange(g, p, -1, false, unrecorded(ctx.events)) > 0) &&
           (e.drew === undefined || (g.turnLog.drawn?.[p] ?? 0) >= e.drew) &&
           (e.landsEntered === undefined || lands(p) >= e.landsEntered) &&
           (!e.drewThisWay || (ctx.resolution?.drew?.[p] ?? 0) > 0) &&
@@ -522,15 +522,18 @@ function count(ctx: EffectContext, e: AmountExpr): number {
       // Aetherflux Reservoir: including the one that triggered it; Rug of Smothering: that player's.
       const p = e.player ? refPlayers(ctx, e.player)[0] : ctx.controller;
       if (p === undefined) return 0;
-      // Call Forth the Tempest: "the total mana value of other spells you've cast this turn".
-      if (e.totalMv) return (g.turnLog.castSpells ?? []).filter((s) => s.player === p && !(e.other && ctx.source && s.id === ctx.source.id && (s.zcc === undefined || s.zcc === ctx.source.zcc))).reduce((n, s) => n + (s.mv ?? 0), 0);
+      // The turn's casts, as they were cast — with any this resolution has made (CR 608.2h); "other": but this spell's own.
+      const all = casts(g, false, unrecorded(ctx.events));
+      const cast = e.other ? otherCasts(all, ctx.source, ctx.sourceZcc) : all;
+      // Call Forth the Tempest: "the total mana value of other spells you've cast this turn" (X as chosen, CR 202.3e).
+      if (e.totalMv) return cast.filter((s) => s.player === p).reduce((n, s) => n + s.mv, 0);
       // Magebane Lizard: "the number of noncreature spells they've cast this turn".
-      if (e.filter) return (g.turnLog.castSpells ?? []).filter((s) => s.player === p && !(e.other && ctx.source && s.id === ctx.source.id) && g.objects[s.id] && matchesFilter(g, g.objects[s.id]!, e.filter as ObjectFilter, { controller: ctx.controller, source: ctx.source ?? null, anyZone: true })).length;
+      if (e.filter) return cast.filter((s) => s.player === p && castMatches(g, s, e.filter as ObjectFilter, { controller: ctx.controller, source: ctx.source ?? null })).length;
       // Delightful Discovery: "for each spell your opponents have cast this turn".
-      if (e.opponents) return Object.entries(g.turnLog.spellsCast).filter(([q]) => q !== ctx.controller).reduce((n, [, k]) => n + (k ?? 0), 0);
+      if (e.opponents) return cast.filter((s) => s.player !== ctx.controller).length;
       // Thrasta, Tempest's Roar: "for each other spell cast this turn" — everyone's (not this one).
-      if (e.anyone) return Object.values(g.turnLog.spellsCast).reduce((n, k) => n + (k ?? 0), 0) - ((g.turnLog.castSpells ?? []).some((s) => ctx.source && s.id === ctx.source.id && (s.zcc === undefined || s.zcc === ctx.source.zcc)) ? 1 : 0);
-      return g.turnLog.spellsCast[p] ?? 0;
+      if (e.anyone) return cast.length;
+      return cast.filter((s) => s.player === p).length;
     }
     case 'attackers_this_turn':
       // Rowdy Research: "each creature that attacked this turn"; Search Party Captain: "each creature you attacked with".
@@ -539,7 +542,7 @@ function count(ctx: EffectContext, e: AmountExpr): number {
     // permanents you sacrificed this turn", "the number of cards put into their graveyard from anywhere this turn".
     case 'happened': {
       const [you] = e.of ? refPlayers(ctx, e.of) : [ctx.controller];
-      return you ? countHappened(g, e, you, ctx.events.slice(loggedUpTo.get(ctx.events) ?? 0)) : 0;
+      return you ? countHappened(g, e, you, unrecorded(ctx.events)) : 0;
     }
     case 'distinct_mana_values': {
       // Eris, Roar of the Storm: "each different mana value among instant and sorcery cards in your graveyard".
@@ -568,7 +571,7 @@ function count(ctx: EffectContext, e: AmountExpr): number {
     // Change of Fortune: "draw a card for each card you've discarded this turn".
     case 'discarded_this_turn': {
       // Counting what this resolution just discarded too ("Discard your hand, then draw a card for each …").
-      const fresh = ctx.events.slice(loggedUpTo.get(ctx.events) ?? 0);
+      const fresh = unrecorded(ctx.events);
       // Dream Salvage: "the number of cards target opponent discarded this turn".
       const who = e.player ? (refPlayers(ctx, e.player as Ref)[0] ?? null) : ctx.controller;
       if (!who) return 0;
@@ -600,7 +603,7 @@ function count(ctx: EffectContext, e: AmountExpr): number {
       const s = ctx.source;
       if (!s) return 0;
       const zcc = ctx.sourceZcc ?? s.zcc;
-      const fresh = ctx.events.slice(loggedUpTo.get(ctx.events) ?? 0);
+      const fresh = unrecorded(ctx.events);
       return (g.turnLog.dealtDamage?.[`${s.id}:${zcc}`] ?? 0) + fresh.reduce((n, ev) => n + (ev.type === 'damage' && ev.source === s.id && (ev.sourceZcc ?? s.zcc) === zcc ? ev.amount : 0), 0);
     }
     case 'discover_shortfall': {
@@ -626,19 +629,15 @@ function count(ctx: EffectContext, e: AmountExpr): number {
     }
     // Haliya: "the life you've gained this turn"; Neheb: "the life your opponents have lost this turn".
     case 'life_this_turn': {
-      const log = e.stat === 'lost' ? g.turnLog.lifeLost : e.stat === 'damage' ? g.turnLog.damageTaken : e.stat === 'noncombat_damage' ? g.turnLog.noncombatDamageTaken : g.turnLog.lifeGained;
+      const damage = e.stat === 'damage' || e.stat === 'noncombat_damage';
+      const log = e.stat === 'damage' ? g.turnLog.damageTaken : g.turnLog.noncombatDamageTaken;
       // Archfiend of Despair: "the life that player lost this turn".
       const players = e.player ? refPlayers(ctx, e.player) : e.who === 'you' ? [ctx.controller] : e.who === 'a_player' ? [...g.order] : g.order.filter((p) => p !== ctx.controller);
       // Counting what this resolution has just done too (CR 608.2h) — Essence Pulse: "You gain 2 life. Each creature gets
       // -X/-X until end of turn, where X is the amount of life you gained this turn."
-      const fresh = ctx.events.slice(loggedUpTo.get(ctx.events) ?? 0);
-      const since = (p: PlayerId): number =>
-        fresh.reduce((n, ev) => {
-          if (e.stat === 'damage' || e.stat === 'noncombat_damage') return n + (ev.type === 'damage' && ev.to.kind === 'player' && ev.to.player === p && (e.stat === 'damage' || !ev.combat) ? ev.amount : 0);
-          if (ev.type !== 'life' || ev.player !== p) return n;
-          return n + (e.stat === 'lost' ? Math.max(0, -ev.delta) : Math.max(0, ev.delta));
-        }, 0);
-      const each = players.map((p) => (log?.[p] ?? 0) + since(p));
+      const fresh = unrecorded(ctx.events);
+      const dealt = (p: PlayerId): number => (log?.[p] ?? 0) + fresh.reduce((n, ev) => n + (ev.type === 'damage' && ev.to.kind === 'player' && ev.to.player === p && (e.stat === 'damage' || !ev.combat) ? ev.amount : 0), 0);
+      const each = players.map((p) => (damage ? dealt(p) : lifeChange(g, p, e.stat === 'lost' ? -1 : 1, false, fresh)));
       return e.who === 'an_opponent' || e.who === 'a_player' ? Math.max(0, ...each) : each.reduce((n, v) => n + v, 0);
     }
     case 'discarded_this_way': {
@@ -774,17 +773,16 @@ function count(ctx: EffectContext, e: AmountExpr): number {
     case 'commander_casts':
       return Object.entries(g.commanderCasts).reduce((n, [id, k]) => n + (g.objects[id]?.owner === ctx.controller ? k : 0), 0);
     case 'cast_before': {
-      // Counted as it was cast, so spells cast in response don't add to it (CR 702.40a).
+      // CR 702.40a (storm): the spells cast before it this turn — those ahead of its own cast in the turn's history, so
+      // what was cast in response doesn't add to it, and it is still known if the spell has been countered since.
+      const all = casts(g);
       const o = e.of.ref === 'self' ? ctx.source : refObjects(ctx, e.of)[0];
+      // Which cast: the spell that triggered this ("Whenever you cast …, copy it for each … before it"), or this spell's.
+      const spell = e.of.ref === 'trigger_object' ? ctx.trigger?.object : undefined;
+      const at = spell ? castOf(all, spell) : o ? ownCast(all, o, e.of.ref === 'self' ? (ctx.sourceZcc ?? o.zcc) : o.zcc) : -1;
+      if (at < 0) return 0;
       // Thousand-Year Storm: "each other instant and sorcery spell you've cast before it this turn".
-      if (e.filter || e.yours) {
-        const ref = e.of.ref === 'trigger_object' ? ctx.trigger?.object : o ? { id: o.id } : undefined;
-        const cast = (g.turnLog.castSpells ?? []).filter((c) => !e.yours || c.player === ctx.controller);
-        const at = ref ? cast.findIndex((c) => c.id === ref.id) : -1;
-        if (at < 0) return 0;
-        return cast.slice(0, at).filter((c) => !e.filter || (g.objects[c.id] && matchesFilter(g, g.objects[c.id]!, e.filter as ObjectFilter, { controller: ctx.controller, source: null, anyZone: true }))).length;
-      }
-      return o?.cast?.before ?? 0;
+      return all.slice(0, at).filter((c) => (!e.yours || c.player === ctx.controller) && castMatches(g, c, e.filter as ObjectFilter | undefined, { controller: ctx.controller, source: null })).length;
     }
     default:
       return 0;

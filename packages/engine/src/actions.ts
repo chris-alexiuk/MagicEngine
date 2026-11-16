@@ -1216,8 +1216,6 @@ function cast(g: GameState, a: CastArgs, events: GameEvent[]): void {
   if (flashback || aftermath || alt?.exileOnLeave) o.exileOnLeave = true;
   // "If that spell would be put into its owner's graveyard, exile it instead." — only a graveyard (CR 614.1a).
   else if (during?.exileOnLeave || permittedExile || (graveyardKey && graveyardPermissionExiles(g, graveyardKey))) o.exileOnLeave = 'graveyard';
-  // CR 702.40a: storm counts the spells cast before this one this turn.
-  const before = Object.values(g.turnLog.spellsCast).reduce((a, b) => a + b, 0);
   // Cinder Strike: "if this spell's additional cost was paid" — an optional additional cost, whichever it was.
   const paid = [...(alt ? [alt.id] : []), ...extras, ...(kicked ? ['kicker'] : []), ...(added.some((a) => !a.required) && !extras.includes('additional') ? ['additional'] : [])];
   // Silumgar's Scorn: "if you … controlled a Dragon as you cast this spell" — noted now, for cards that ask.
@@ -1228,7 +1226,6 @@ function cast(g: GameState, a: CastArgs, events: GameEvent[]): void {
     by: player,
     // Where it was cast from — a foretold or plotted card from exile too ("if this spell was cast from exile").
     from: castFrom,
-    before,
     // A kicker that isn't mana ("Kicker—Sacrifice an artifact or Goblin") is paid as an optional additional cost.
     // Vodalian Mindsinger: "for each time it was kicked" — each of its two kicker costs paid counts (CR 702.33c).
     ...(kicked ? { kicked: true as const, kicks: kickedWith ? kickedWith.length : kicks } : extras.includes('kicker') ? { kicked: true as const, kicks: 1 } : {}),
@@ -1262,13 +1259,13 @@ function cast(g: GameState, a: CastArgs, events: GameEvent[]): void {
   const counted = (a: unknown) => amountOf({ g, controller: player, source: o, events: [], targets, x, memo: {} }, a as Amount);
   const division = program ? divisionFor(program.effects, targets, x, divide, counted) : undefined;
   g.stack.push({ kind: 'spell', object: id, controller: player, x, targets, ...(program ? { program } : {}), ...(lki ? { costLKI: lki } : {}), ...(division ? { division } : {}) });
-  // CR 700.14: the mana spent to cast spells this turn, before and after this one ("Whenever you expend 4").
   const spentNow = Object.values(spent).reduce((a, b) => a + b, 0);
   // Liberator: "if the amount of mana spent to cast that spell is greater than ~'s power".
   if (o.cast) o.cast.manaSpent = spentNow;
-  const manaBefore = g.turnLog.manaSpent?.[player] ?? 0;
-  (g.turnLog.manaSpent ??= {})[player] = manaBefore + spentNow;
-  events.push({ type: 'cast', player, object: id, nth: (g.turnLog.spellsCast[player] ?? 0) + 1, manaBefore, manaSpent: spentNow });
+  // Which of its caster's spells this turn it is (`nth`: "your second spell each turn") and the mana they had spent on
+  // spells before it (`manaBefore`: "whenever you expend 4", CR 700.14) are filled in as it's recorded in the turn's
+  // history, where the casts before it are.
+  events.push({ type: 'cast', player, object: id, nth: 0, manaBefore: 0, manaSpent: spentNow });
   announceTargets(g.stack[g.stack.length - 1]!, events, g);
   // CR 601.2i: a player who had priority when casting gets priority afterward (not mid-resolution).
   if (!during) givePriority(g, player);

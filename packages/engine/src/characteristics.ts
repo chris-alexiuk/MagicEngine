@@ -21,7 +21,7 @@ import type {
 } from '@mtg/schema';
 import { evalCondition } from './conditions.js';
 import { amountOf } from './resolve.js';
-import { putIntoGraveyard } from './history.js';
+import { casts, putIntoGraveyard } from './history.js';
 import type { GameObject, GameState, LKIStats, ManaColor, PlayerId } from './types.js';
 import { abilitySources, battlefieldZcc, faceOf, manaValueOf, nameOf, pairedPartner } from './zones.js';
 
@@ -1137,7 +1137,7 @@ export function matchesFilter(
     if (o.zone !== 'stack' || !o.cast || o.cast.copy) return false;
     const from = f.firstCastThisTurn.fromZone;
     if (from && o.cast.from !== from) return false;
-    const first = (g.turnLog.castSpells ?? []).find((s) => s.player === o.cast!.by && (!from || s.from === from));
+    const first = casts(g).find((s) => s.player === o.cast!.by && (!from || s.from === from));
     if (first && !(first.id === o.id && (first.zcc === undefined || first.zcc === o.zcc))) return false;
   }
   if (f.combatWithSource) {

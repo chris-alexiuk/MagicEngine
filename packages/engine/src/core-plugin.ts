@@ -33,7 +33,7 @@ import { RulesError, type AttackTarget, type ChoiceAnswer, type DamageRecipient,
 import { cantLose, cantWin, playerLoses } from './flow.js';
 import { battlefieldZcc, discardCard, drawCard, faceOf, livePlayers, manaValueOf, meldCards, meldPartners, moveObject, moveTogether, nameOf, nextPlayer, setTapped, zoneList, abilitySources, pairedPartner, type PlannedMove } from './zones.js';
 import { castableCard, castDuringResolution } from './actions.js';
-import { putIntoGraveyard, tokensCreated } from './history.js';
+import { castMatches, casts, putIntoGraveyard, tokensCreated } from './history.js';
 
 /**
  * Handlers for the core AST nodes (schema CORE_NODES). Each effect reads its
@@ -6327,9 +6327,11 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     if (e.type !== 'cast' || check.sourceLeft) return [];
     // "Whenever you cast your second spell each turn"; "… their first noncreature spell each turn" counts only those.
     if (typeof t.nth === 'number' && t.nthOfKind) {
-      const filter = { ...(t.filter as ObjectFilter) };
-      const ctxF = { controller: check.controller, source: check.source, anyZone: true };
-      const before = (check.g.turnLog.castSpells ?? []).filter((c) => c.player === e.player && c.id !== e.object && check.g.objects[c.id] && matchesFilter(check.g, check.g.objects[c.id]!, filter, ctxF)).length;
+      // The spells of that kind the player cast before this one this turn, as they were cast.
+      const all = casts(check.g);
+      const at = all.findIndex((c) => c.event === e);
+      const earlier = at < 0 ? all.filter((c) => c.id !== e.object) : all.slice(0, at);
+      const before = earlier.filter((c) => c.player === e.player && castMatches(check.g, c, t.filter as ObjectFilter | undefined, { controller: check.controller, source: check.source })).length;
       if (before !== t.nth - 1) return [];
     } else if (typeof t.nth === 'number' && e.nth !== t.nth) return [];
     // Arcbound Tracker: "a spell other than your first spell each turn".

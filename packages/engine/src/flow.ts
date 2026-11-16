@@ -8,7 +8,7 @@ import { emptyPool } from './mana.js';
 import { canAttach, canEnchantPlayer, destroyTogether } from './permanents.js';
 import { recheckTargets, runResolution, startResolution } from './resolve.js';
 import { evalCondition, newTurnLog } from './conditions.js';
-import { turnHistory } from './history.js';
+import { casts, turnHistory } from './history.js';
 import { applyControlEffects } from './control.js';
 import { keptManaColors, legendRuleExempt, manaBecomes, maxHandSize, playerRule, untapLimits } from './player-rules.js';
 import { promptAsEnters } from './as-enters.js';
@@ -475,12 +475,11 @@ function takeSkip(g: GameState, kind: 'untap' | 'draw' | 'combat'): boolean {
 export function beginTurn(g: GameState, player: PlayerId, events: GameEvent[]): void {
   delete g.extraPhases;
   delete g.inExtra;
-  // Remember last turn's spells (werewolves, CR 702.145-style conditions); start a fresh log.
-  g.lastTurnSpells = g.turnLog.spellsCast;
-  // First Response: "if you lost life last turn".
-  g.lastTurnLog = g.turnLog;
   // CR 731.2: how many spells the previous turn's active player cast, for day and night.
-  const previousCasts = g.turn > 0 ? (g.turnLog.spellsCast[g.active] ?? 0) : undefined;
+  const previousCasts = g.turn > 0 ? casts(g).filter((c) => c.player === g.active).length : undefined;
+  // The turn that ended is kept as the last turn ("if you lost life last turn", "if no spells were cast last turn");
+  // a fresh log and history begin.
+  g.lastTurnLog = g.turnLog;
   g.turnLog = newTurnLog();
   turnHistory(g);
   g.turn++;

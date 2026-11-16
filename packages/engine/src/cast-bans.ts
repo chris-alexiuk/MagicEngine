@@ -1,5 +1,6 @@
 import type { CastProhibitionNode, FaceDef, ObjectFilter, StaticAbility } from '@mtg/schema';
 import { matchesFilter, objectAbilities, staticConditionHolds } from './characteristics.js';
+import { castMatches, casts } from './history.js';
 import type { GameObject, GameState, PlayerId } from './types.js';
 import { abilitySources, nameOf } from './zones.js';
 
@@ -32,8 +33,7 @@ function bans(g: GameState, e: CastProhibitionNode, source: GameObject, player: 
  */
 export function castProhibition(g: GameState, player: PlayerId, face: FaceDef, spell: GameObject): string | null {
   if (!anyProhibitions(g)) return null;
-  const matches = (filter: ObjectFilter | undefined, controller: PlayerId, source: GameObject | null, o: GameObject = spell) =>
-    !filter || matchesFilter(g, o, filter, { controller, source, anyZone: true });
+  const matches = (filter: ObjectFilter | undefined, controller: PlayerId, source: GameObject | null) => !filter || matchesFilter(g, spell, filter, { controller, source, anyZone: true });
   for (const ban of g.castBans ?? []) {
     if (ban.lastTurn < g.turn || !ban.players.includes(player) || ban.activateNonMana) continue;
     if (ban.fromZones && !ban.fromZones.includes(spell.zone)) continue;
@@ -52,7 +52,9 @@ export function castProhibition(g: GameState, player: PlayerId, face: FaceDef, s
       if (e.fromZones && !(e.fromZones as string[]).includes(spell.zone)) continue;
       if (!matches(e.filter, source.controller, source)) continue;
       if (e.maxPerTurn !== undefined) {
-        const cast = (g.turnLog.castSpells ?? []).filter((c) => c.player === player && g.objects[c.id] && matches(e.filter, source.controller, source, g.objects[c.id]!)).length;
+        // Rule of Law: the spells of that kind the player has cast this turn, as they were cast — a copy that was cast
+        // is one of them, gone though it is.
+        const cast = casts(g).filter((c) => c.player === player && castMatches(g, c, e.filter, { controller: source.controller, source })).length;
         if (cast < e.maxPerTurn) continue;
       }
       return `${face.name} can't be cast (${nameOf(g, source)}).`;

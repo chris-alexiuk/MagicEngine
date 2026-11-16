@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { chars, legalActions } from '../src/index.js';
 import type { GameState } from '../src/index.js';
-import { act, actWithEvents, give, illegal, makeCard, sacrificedEarlier, start, toStep } from './helpers.js';
+import { act, actWithEvents, give, illegal, lifeChangedEarlier, makeCard, sacrificedEarlier, start, toStep } from './helpers.js';
 import { maxHandSize } from '../src/player-rules.js';
 import { moveObject } from '../src/zones.js';
 
@@ -10308,7 +10308,7 @@ describe('Sieges', () => {
     for (const lose of [false, true]) {
       let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
       give(g, 'alice', 'Soothsayer Lite', 'battlefield');
-      if (lose) g.turnLog.lostLife.push('alice');
+      if (lose) lifeChangedEarlier(g, 'alice');
       g = toStep(g, 'end', 'alice');
       let surveiled = false;
       g = drive(g, (g) => {

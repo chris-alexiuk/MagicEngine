@@ -1,6 +1,7 @@
 import type { Color, CostModifierNode, FaceDef, StaticAbility } from '@mtg/schema';
 import { matchesFilter, objectAbilities, printedAbilities } from './characteristics.js';
 import { evalCondition } from './conditions.js';
+import { castMatches, casts } from './history.js';
 import type { ManaCost } from './mana.js';
 import type { EffectContext } from './registry.js';
 import { amountOf } from './resolve.js';
@@ -68,7 +69,8 @@ export function applyCostModifiers(g: GameState, player: PlayerId, spell: GameOb
       if (e.exceptCastersTurn && g.active === player) continue;
       // Conduit of Ruin: "The first creature spell you cast each turn" — none like it cast before this one this turn.
       if (e.firstEachTurn) {
-        const before = (g.turnLog.castSpells ?? []).filter((c) => c.player === player && c.id !== spell.id && g.objects[c.id] && (!e.filter || matchesFilter(g, g.objects[c.id]!, e.filter, { controller: source.controller, source, anyZone: true })));
+        // (As they were cast; this spell itself isn't cast yet — the same card cast earlier this turn was another spell.)
+        const before = casts(g).filter((c) => c.player === player && !(c.id === spell.id && (c.zcc === undefined || c.zcc === spell.zcc)) && castMatches(g, c, e.filter, { controller: source.controller, source }));
         // Alisaie Leveilleur: "The second spell you cast each turn" — exactly one cast before it.
         if (before.length !== (e.nthEachTurn ?? 1) - 1) continue;
       }
