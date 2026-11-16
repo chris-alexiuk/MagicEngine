@@ -1,0 +1,15 @@
+
+> magic-engine@ cards:reparse /home/runner/work/MagicEngine/MagicEngine
+> pnpm --filter @mtg/compiler reparse -- ../../apps/web/public/cards.json.gz --as-is
+
+
+> @mtg/compiler@0.1.0 reparse /home/runner/work/MagicEngine/MagicEngine/packages/compiler
+> tsx scripts/reparse.ts -- ../../apps/web/public/cards.json.gz --as-is
+
+32966 cards, as compiled
+  full      26438  80.2%  (was 26438)
+  partial    4020  12.2%  (was 4020)
+  manual     2508   7.6%  (was 2508)
+  lines: 54495 compiled, 7314 unparsed
+  by hand: 182 compiled lines with one sentence left to the player; 1918 unread lines whose trigger the engine knows
+  parameters: 415 names in 1122 places on nodes; 74 used by one card alone

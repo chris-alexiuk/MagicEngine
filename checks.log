@@ -1,0 +1,36 @@
+
+> magic-engine@ cards:check /home/runner/work/MagicEngine/MagicEngine
+> pnpm --filter @mtg/engine sandbox -- ../../apps/web/public/cards.json.gz --jobs 4 --full --commit c3a0ac1a376f6457fd0100ec1e6fe26b1e22f6bc --out /tmp/checks.json.gz --baseline /tmp/last/checks.json.gz --previous-pool /tmp/last/cards.json.gz --report /tmp/changes.md --save ../../apps/web/public --strict --allow-regrades 0
+
+
+> @mtg/engine@0.1.0 sandbox /home/runner/work/MagicEngine/MagicEngine/packages/engine
+> tsx scripts/sandbox.ts -- ../../apps/web/public/cards.json.gz --jobs 4 --full --commit c3a0ac1a376f6457fd0100ec1e6fe26b1e22f6bc --out /tmp/checks.json.gz --baseline /tmp/last/checks.json.gz --previous-pool /tmp/last/cards.json.gz --report /tmp/changes.md --save ../../apps/web/public --strict --allow-regrades 0
+
+32966 cards, 32966 played in 773 s (93.0 ms each when played), 45489 runs
+Every card was played (asked for). Going by the run before, 0 of 32966 cards would have been.
+All 32966 cards that would have kept their result played as before.
+  read in full:  26440 cards, 2 with a certain problem, 199 more to look at
+  read in part:   4018 cards, 2 with a certain problem, 904 more to look at
+  read not at all:   2508 cards, 1 with a certain problem, 1105 more to look at
+
+Certain problems, cards read in full:
+      2  can't be cast: Paying {S} isn’t supported yet. Use manual moves for this card.
+         Arcum's Astrolabe, Icehide Golem
+
+To look at, cards read in full:
+    192  resolved and changed nothing
+         Command Beacon, Dauthi Voidwalker, Pyroblast, Nesting Grounds, Basalt Monolith
+      4  enters and dies with -N toughness on this board
+         Death's Shadow, Enemy of Enlightenment, Dread Slag, Mogg Squad
+      3  enters and dies with N toughness on this board
+         Activated Sleeper, Force of Savagery, Cryptborn Horror
+
+Certain problems, other cards:
+      1  can't be cast: Paying {D} isn’t supported yet. Use manual moves for this card.
+         Boulder Jockey
+      1  can't be cast: Paying {C/P}{C/P} isn’t supported yet. Use manual moves for this card.
+         Kozilek, Compleated
+      1  can't be cast: Paying {S} isn’t supported yet. Use manual moves for this card.
+         Wowzer, the Aspirational
+
+Since the last run: 0 left the pool, 0 no longer fully automatic, 0 fully automatic now, 0 new problems, 0 problems gone, 0 played differently

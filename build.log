@@ -1,0 +1,10 @@
+
+> magic-engine@ cards:build /home/runner/work/MagicEngine/MagicEngine
+> pnpm --filter @mtg/compiler compile -- --download --out apps/web/public --reuse /tmp/last
+
+
+> @mtg/compiler@0.1.0 compile /home/runner/work/MagicEngine/MagicEngine/packages/compiler
+> tsx src/cli.ts -- --download --out apps/web/public --reuse /tmp/last
+
+reused the card DB built 2026-11-16T01:08:02.992Z: Scryfall's files (2026-11-15T22:02:06.940+00:00) and the compiler are the ones it was built from
+  32966 cards; wrote /home/runner/work/MagicEngine/MagicEngine/apps/web/public

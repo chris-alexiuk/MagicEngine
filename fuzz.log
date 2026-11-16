@@ -1,0 +1,50 @@
+
+> magic-engine@ fuzz /home/runner/work/MagicEngine/MagicEngine
+> pnpm --filter @mtg/engine fuzz -- ../../apps/web/public/cards.json.gz --as-is --jobs 4 --games 120 --probe 40 --seed 210 --report-unlisted
+
+
+> @mtg/engine@0.1.0 fuzz /home/runner/work/MagicEngine/MagicEngine/packages/engine
+> tsx scripts/fuzz.ts -- ../../apps/web/public/cards.json.gz --as-is --jobs 4 --games 120 --probe 40 --seed 210 --report-unlisted
+
+--- job 1 of 4
+30 games, 1144 turns, 38169 actions in 392.1 s (10.27 ms/action)
+  slowest action: 35 ms (game 13) 
+  triggers 194, auto-resolved 866, manual 27, fizzled 3, tokens 55
+  X: 0 casts and activations with X above 0 (of 0 tried)
+  crash: 0
+  rejected: 0
+  invariant: 0
+  unlisted: 0 (looked for in 935 states)
+--- job 2 of 4
+30 games, 1196 turns, 40472 actions in 408.9 s (10.10 ms/action)
+  slowest action: 37 ms (game 16) 
+  triggers 251, auto-resolved 1008, manual 27, fizzled 4, tokens 76
+  X: 2 casts and activations with X above 0 (of 2 tried)
+  crash: 0
+  rejected: 0
+  invariant: 0
+  unlisted: 0 (looked for in 991 states)
+--- job 3 of 4
+30 games, 1138 turns, 38466 actions in 403.5 s (10.49 ms/action)
+  slowest action: 172 ms (game 19) 
+  triggers 263, auto-resolved 896, manual 32, fizzled 3, tokens 52
+  X: 2 casts and activations with X above 0 (of 2 tried)
+  crash: 0
+  rejected: 0
+  invariant: 0
+  unlisted: 0 (looked for in 942 states)
+--- job 4 of 4
+30 games, 1168 turns, 38618 actions in 386.7 s (10.01 ms/action)
+  slowest action: 40 ms (game 2) 
+  triggers 188, auto-resolved 779, manual 33, fizzled 8, tokens 45
+  X: 0 casts and activations with X above 0 (of 0 tried)
+  crash: 0
+  rejected: 0
+  invariant: 0
+  unlisted: 0 (looked for in 944 states)
+--- all 4 jobs
+120 games, 4646 turns, 155725 actions in 411.2 s (10.22 ms/action in each job)
+  crash: 0
+  rejected: 0
+  invariant: 0
+  unlisted: 0 (looked for in 3812 states)
