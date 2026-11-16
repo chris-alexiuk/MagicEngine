@@ -1,7 +1,7 @@
 import type { Amount, AmountExpr, EffectNode, ObjectFilter, Ref } from '@mtg/schema';
 import { chars, colorsAmong, creatureTypesOf, filterZones, hasType, matchesFilter, power, toughness } from './characteristics.js';
 import { enteredThisTurn, loggedUpTo } from './conditions.js';
-import { died, leftBattlefield, putIntoGraveyard, sacrificed, tokensCreated } from './history.js';
+import { countHappened } from './history.js';
 import { runEffect, type EffectContext } from './registry.js';
 import { checkingOnResolution, isLegalTarget, targetingAs, withPriorTargets, withTargetX, withTriggerInfo } from './targets.js';
 import type { ChoiceAnswer, DamageRecipient, GameEvent, GameObject, GameState, ObjectId, PlayerId, Resolution, StackEntry, TargetRef } from './types.js';
@@ -327,7 +327,7 @@ export function refRecipients(ctx: EffectContext, ref: Ref): DamageRecipient[] {
 }
 
 /** Amount kinds the engine counts (schema CORE_NODES.amounts). */
-export const AMOUNT_KINDS: readonly string[] = ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way', 'life_this_turn', 'excess_this_way', 'mana_spent', 'sum', 'max', 'unspent_mana', 'attackers_this_turn', 'sacrificed_this_turn', 'distinct_mana_values', 'drawn_this_turn', 'tokens_created_this_turn', 'tapped_this_way', 'counters_among', 'counters_removed', 'attacks_this_turn', 'convoked', 'sacrificed_to_cast', 'discover_shortfall', 'source_damage_this_turn', 'entered_this_turn', 'discarded_this_turn', 'to_graveyard_this_turn', 'distinct_names', 'flips_won', 'speed', 'drawn_this_way', 'left_this_turn', 'creature_types_among', 'distinct_powers', 'most_sharing_type', 'ability_resolutions', 'countered_this_way', 'devoured'];
+export const AMOUNT_KINDS: readonly string[] = ['count', 'happened', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'damage_this_way', 'life_this_turn', 'excess_this_way', 'mana_spent', 'sum', 'max', 'unspent_mana', 'attackers_this_turn', 'distinct_mana_values', 'drawn_this_turn', 'tapped_this_way', 'counters_among', 'counters_removed', 'attacks_this_turn', 'convoked', 'sacrificed_to_cast', 'discover_shortfall', 'source_damage_this_turn', 'entered_this_turn', 'discarded_this_turn', 'distinct_names', 'flips_won', 'speed', 'drawn_this_way', 'creature_types_among', 'distinct_powers', 'most_sharing_type', 'ability_resolutions', 'countered_this_way', 'devoured'];
 
 /** The objects a reference meant, with the zone-change count it meant them at (for last-known information). */
 function refRefs(ctx: EffectContext, ref: Ref): { id: ObjectId; zcc: number }[] {
@@ -535,10 +535,12 @@ function count(ctx: EffectContext, e: AmountExpr): number {
     case 'attackers_this_turn':
       // Rowdy Research: "each creature that attacked this turn"; Search Party Captain: "each creature you attacked with".
       return Object.keys(g.turnLog.attacks ?? {}).filter((id) => !e.mine || g.objects[id]?.controller === ctx.controller).length;
-    case 'sacrificed_this_turn':
-      // The Balrog, Durin's Bane: "each permanent sacrificed this turn".
-      // Sawblade Skinripper: "the permanents you sacrificed this turn" — yours only.
-      return sacrificed(g, e.mine ? ctx.controller : undefined).filter((s) => !e.types || e.types.some((t) => s.types.includes(t))).length;
+    // A question asked of the turn's history (history.ts): "for each creature that died this turn", "the number of
+    // permanents you sacrificed this turn", "the number of cards put into their graveyard from anywhere this turn".
+    case 'happened': {
+      const [you] = e.of ? refPlayers(ctx, e.of) : [ctx.controller];
+      return you ? countHappened(g, e, you, ctx.events.slice(loggedUpTo.get(ctx.events) ?? 0)) : 0;
+    }
     case 'distinct_mana_values': {
       // Eris, Roar of the Storm: "each different mana value among instant and sorcery cards in your graveyard".
       const f = e.filter as ObjectFilter;
@@ -589,8 +591,6 @@ function count(ctx: EffectContext, e: AmountExpr): number {
       if (e.who === 'opponents' && e.max) return Math.max(0, ...livePlayers(g).filter((p) => p !== ctx.controller).map((p) => g.turnLog.drawn?.[p] ?? 0));
       if (e.who === 'opponents') return livePlayers(g).filter((p) => p !== ctx.controller).reduce((n, p) => n + (g.turnLog.drawn?.[p] ?? 0), 0);
       return g.turnLog.drawn?.[ctx.controller] ?? 0;
-    case 'tokens_created_this_turn':
-      return tokensCreated(g, ctx.controller);
     case 'tapped_this_way':
       return ctx.resolution?.tappedThisWay ?? 0;
     case 'damage_this_way':
@@ -616,26 +616,6 @@ function count(ctx: EffectContext, e: AmountExpr): number {
       const names = g.zones.battlefield.map((id) => g.objects[id]!).filter((o) => !o.faceDown && matchesFilter(g, o, f, { controller: ctx.controller, source: ctx.source ?? null })).map((o) => chars(g, o).name);
       return new Set(names).size;
     }
-    case 'to_graveyard_this_turn': {
-      // Fraying Sanity: "the number of cards put into their graveyard from anywhere this turn" (a token isn't a card).
-      const [p] = refPlayers(ctx, e.player as Ref);
-      return p ? putIntoGraveyard(g).filter((r) => !r.token && r.owner === p).length : 0;
-    }
-    // Kutzil's Flanker: "for each creature that left the battlefield under your control this turn".
-    case 'left_this_turn':
-      return leftBattlefield(g).filter((d) => (e.types ?? ['Creature']).some((t) => d.types.includes(t)) && (!e.controller || (e.controller === 'you' ? d.controller === ctx.controller : d.controller !== ctx.controller))).length;
-    case 'died_this_turn':
-      // "for each creature that died this turn" — creatures by default, as they last existed (CR 700.4).
-      return died(g).filter(
-        (d) =>
-          (e.types ?? ['Creature']).some((t) => d.types.includes(t)) &&
-          (!e.subtypes || e.subtypes.some((t) => d.subtypes.includes(t))) &&
-          // Cult Conscript: "a non-Skeleton creature".
-          !e.notSubtypes?.some((t) => d.subtypes.includes(t)) &&
-          !(e.nontoken && d.token) &&
-          (!e.owner || d.owner === ctx.controller) &&
-          (!e.controller || (e.controller === 'you' ? d.controller === ctx.controller : d.controller !== ctx.controller)),
-      ).length;
     case 'moved_this_way': {
       const moved = movedThisWay(ctx, e);
       // Combustible Gearhulk: "the total mana value of those cards".

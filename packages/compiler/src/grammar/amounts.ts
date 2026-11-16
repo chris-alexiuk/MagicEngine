@@ -2,6 +2,7 @@ import type { Amount, AmountExpr, Color, EffectNode, ObjectFilter, Ref } from '@
 import type { Binder } from './binder.js';
 import { parseFilter, parseObjectRef, parsePlayerRef } from './nouns.js';
 import { capitalise, COLOR_WORDS, parseAmount } from './words.js';
+import { happenedAmount } from './happened.js';
 
 /**
  * Numbers the game counts (CR 107.3, CR 608.2h): "the number of creatures you control",
@@ -39,12 +40,6 @@ function objects(text: string, b: Binder, plural: boolean): AmountExpr | null {
     return { ...inner, filter: { ...inner.filter, other: true } };
   }
   const t = text.trim();
-  // Fraying Sanity: "the number of cards put into their graveyard from anywhere this turn" (tokens aren't cards).
-  const putThere = /^cards put into (your|their|that player's) graveyard from anywhere this turn$/.exec(t);
-  if (putThere && plural) {
-    const player = putThere[1] === 'your' ? ({ ref: 'you' } as Ref) : b.player && b.player.ref !== 'you' ? b.player : null;
-    return player ? { kind: 'to_graveyard_this_turn', player } : null;
-  }
   // "for each card in target opponent's hand", "the number of creature cards in target player's graveyard"
   // Peer into the Abyss: "the number of cards in their library" — the player the sentence is about.
   // Animus of Night's Reach: "the number of creature cards in defending player's graveyard".
@@ -137,42 +132,6 @@ export function movedThisWay(text: string, b: Binder): AmountExpr | null {
   return { kind: 'moved_this_way', how, ...(f.types ? { types: f.types } : {}), ...(f.notTypes ? { notTypes: f.notTypes } : {}), ...(f.token !== undefined ? { token: f.token } : {}), ...(f.subtypes ? { subtypes: f.subtypes } : {}), ...(f.other ? { other: true } : {}) };
 }
 
-/** "creature that died this turn", "nontoken creatures that died this turn", "Zubera that died this turn". */
-function diedThisTurn(text: string, b: Binder): AmountExpr | null {
-  // Kutzil's Flanker: "each creature that left the battlefield under your control this turn".
-  const left = /^(creatures?|permanents?|artifacts?) that left the battlefield (?:under (your|an opponent's) control )?this turn$/.exec(text.trim());
-  if (left) {
-    const kind = left[1]!.replace(/s$/, '');
-    return { kind: 'left_this_turn', ...(kind !== 'creature' ? { types: kind === 'permanent' ? ['Artifact', 'Battle', 'Creature', 'Enchantment', 'Land', 'Planeswalker'] : ['Artifact'] } : {}), ...(left[2] ? { controller: left[2] === 'your' ? 'you' : 'opponent' } : {}) };
-  }
-  // Body Count: "each creature that died under your control this turn".
-  // Caller of the Claw: "each nontoken creature put into your graveyard from the battlefield this turn" — owned by you.
-  const putInto = /^(.+?) put into your graveyard from the battlefield this turn$/.exec(text.trim());
-  if (putInto) {
-    const a = diedThisTurn(`${putInto[1]} that died this turn`, b);
-    return a && a.kind === 'died_this_turn' && !a.controller ? { ...a, owner: 'you' } : null;
-  }
-  // Tobias, Doomed Conqueror: "each nontoken creature you controlled that died this turn".
-  const yoursDied = /^(.+?) you controlled that died this turn$/.exec(text.trim());
-  if (yoursDied) return diedThisTurn(`${yoursDied[1]} that died under your control this turn`, b);
-  const m = /^(.+?) that died (?:under (your|an opponent's) control )?this turn$/.exec(text.trim());
-  if (!m) return null;
-  const pf = parseFilter(m[1]!, b.clone());
-  if (!pf) return null;
-  const under = m[2] === 'your' ? 'you' : m[2] ? 'opponent' : undefined;
-  const { types, subtypes, notSubtypes, token, controller: ctl, ...rest } = pf.filter;
-  const controller = ctl ?? under;
-  if (Object.keys(rest).length || token === true || (controller && controller !== 'you' && controller !== 'opponent') || (ctl && under)) return null;
-  return {
-    kind: 'died_this_turn',
-    ...(types && !(types.length === 1 && types[0] === 'Creature') ? { types } : {}),
-    ...(subtypes ? { subtypes } : {}),
-    ...(notSubtypes ? { notSubtypes } : {}),
-    ...(token === false ? { nontoken: true as const } : {}),
-    ...(controller ? { controller: controller as 'you' | 'opponent' } : {}),
-  };
-}
-
 /** What follows "for each": a singular noun phrase. */
 export function parseForEach(text: string, b: Binder): AmountExpr | null {
   // Toil to Renown: "for each tapped artifact, creature, and land you control" — each permanent that's any of them, once.
@@ -184,7 +143,7 @@ export function parseForEach(text: string, b: Binder): AmountExpr | null {
     const two = one ? parseForEach(added[2]!, b.clone()) : null;
     if (one && two && !one.times && !two.times && !one.plus && !two.plus) return { kind: 'sum', parts: [one, two] };
   }
-  const moved = movedThisWay(t, b) ?? diedThisTurn(t, b);
+  const moved = movedThisWay(t, b) ?? happenedAmount(t, b);
   if (moved) return moved;
   // Bioengineered Future: "for each land that entered the battlefield under your control this turn".
   const enteredEach = /^(?!other )(.+?) that entered the battlefield under your control this turn$/.exec(t);
@@ -211,9 +170,6 @@ export function parseForEach(text: string, b: Binder): AmountExpr | null {
   }
   // Thrasta, Tempest's Roar: "for each other spell cast this turn" — by anyone.
   if (t === 'other spell cast this turn') return { kind: 'spells_cast_this_turn', anyone: true, other: true };
-  // The Balrog, Durin's Bane: "for each permanent sacrificed this turn".
-  const sacrificed = /^(permanent|creature|artifact) sacrificed this turn$/.exec(t);
-  if (sacrificed) return { kind: 'sacrificed_this_turn', ...(sacrificed[1] !== 'permanent' ? { types: [capitalise(sacrificed[1]!)] } : {}) };
   // Eris, Roar of the Storm: "for each different mana value among instant and sorcery cards in your graveyard".
   const distinctMv = /^different mana value among (.+)$/.exec(t);
   if (distinctMv) {
@@ -531,9 +487,6 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
   if (dealtTo) return { kind: 'life_this_turn', who: dealtTo[2] === 'you' ? 'you' : 'opponents', stat: dealtTo[1] ? 'noncombat_damage' : 'damage' };
   // Call Forth the Tempest: "the total mana value of other spells you've cast this turn".
   if (t === "the total mana value of other spells you've cast this turn") return { kind: 'spells_cast_this_turn', totalMv: true, other: true };
-  // Sawblade Skinripper: "the number of permanents you sacrificed this turn".
-  const sacN = /^the number of (permanent|creature|artifact)s you(?:'ve)? sacrificed this turn$/.exec(t);
-  if (sacN) return { kind: 'sacrificed_this_turn', mine: true, ...(sacN[1] !== 'permanent' ? { types: [capitalise(sacN[1]!)] } : {}) };
   // All-Fates Scroll: "the number of differently named lands you control".
   const named = /^the number of differently named (.+)$/.exec(t);
   if (named) {
@@ -587,8 +540,6 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
   if (/^the number of cards you've drawn this turn$/.test(t)) return { kind: 'drawn_this_turn' };
   // Thought Sponge: "the greatest number of cards an opponent has drawn this turn".
   if (t === 'the greatest number of cards an opponent has drawn this turn') return { kind: 'drawn_this_turn', who: 'opponents', max: true };
-  // Thalisse, Reverent Medium: "the number of tokens you created this turn"
-  if (/^the number of tokens you(?:'ve)? created this turn$/.test(t)) return { kind: 'tokens_created_this_turn' };
   // Combustible Gearhulk: "you mill three cards, then … the total mana value of those cards".
   if (b.milled && /^the total mana value of (?:those cards|the milled cards|the cards milled this way)$/.test(t)) return { kind: 'moved_this_way', how: 'milled', stat: 'mana_value' };
   // Foul Renewal: "Return target creature card from your graveyard to your hand. … where X is the toughness of the card
@@ -682,7 +633,7 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
   const number = /^the number of (.+)$/.exec(t);
   if (number) {
     const what = number[1]!;
-    const moved = movedThisWay(what, b) ?? diedThisTurn(what, b);
+    const moved = movedThisWay(what, b) ?? happenedAmount(what, b);
     if (moved) return moved;
     if (what === 'opponents you have') return { kind: 'players', who: 'opponents' };
     // Meren: "the number of experience counters you have" (CR 122.1: counters on a player).

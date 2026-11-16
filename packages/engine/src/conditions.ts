@@ -5,13 +5,13 @@ import { amountOf, refObjects, refPlayers } from './resolve.js';
 import type { GameEvent, GameObject, GameState, LKIStats, ObjectId, PlayerId } from './types.js';
 import { faceOf, livePlayers, manaValueOf, meldPartners, nameOf, notePlusCounters, pairedPartner, zoneList } from './zones.js';
 import { isRingBearer } from './ring.js';
-import { cardExiled, creatureDied, crimes, descended, died, leftBattlefield, leftGraveyard, loyaltyActivated, nonlandLeft, putIntoGraveyard, returnedToHand, sacrificed, searchedOwn, tokensCreated } from './history.js';
+import { countHappened, crimes, descended, loyaltyActivated, searchedOwn, type Asked } from './history.js';
 
 /** Condition tags the engine evaluates (schema CORE_NODES.conditions). */
 export const CONDITION_TYPES: readonly string[] = [
-  'greatest_power', 'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'top_card', 'graveyard', 'this_turn', 'spells_last_turn',
-  'counters', 'is', 'has_attached', 'monstrous', 'harnessed', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned', 'day_night', 'saddled', 'max_speed', 'solved', 'paired', 'to_graveyard_this_turn', 'has_designation', 'compare_stats', 'won_flip', 'before_attackers', 'step', 'prepared', 'won_clash', 'ring_bearer', 'chose_other_ring_bearer', 'completed_dungeon', 'initiative',
-  'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes', 'opponent_has_more', 'attacked_with', 'was_type', 'was_attacking', 'had_keyword', 'sacrificed_this_turn', 'not', 'early_turn', 'distinct_names', 'unique_name', 'greatest_mv', 'first_combat', 'cast_in_main_phase', 'cast_off_sorcery_timing', 'chosen_word', 'most_of', 'lki_was', 'cast_named_before', 'same_name', 'ability_resolutions', 'attacking_you', 'left_graveyard', 'controlled_it', 'spent_colors', 'attack_power', 'activated_times', 'tribute_paid', 'meld_pair', 'most_common_color', 'controlled_at_cast', 'kicked_with',
+  'greatest_power', 'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'top_card', 'graveyard', 'this_turn', 'happened', 'spells_last_turn',
+  'counters', 'is', 'has_attached', 'monstrous', 'harnessed', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned', 'day_night', 'saddled', 'max_speed', 'solved', 'paired', 'has_designation', 'compare_stats', 'won_flip', 'before_attackers', 'step', 'prepared', 'won_clash', 'ring_bearer', 'chose_other_ring_bearer', 'completed_dungeon', 'initiative',
+  'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes', 'opponent_has_more', 'attacked_with', 'was_type', 'was_attacking', 'had_keyword', 'not', 'early_turn', 'distinct_names', 'unique_name', 'greatest_mv', 'first_combat', 'cast_in_main_phase', 'cast_off_sorcery_timing', 'chosen_word', 'most_of', 'lki_was', 'cast_named_before', 'same_name', 'ability_resolutions', 'attacking_you', 'controlled_it', 'spent_colors', 'attack_power', 'activated_times', 'tribute_paid', 'meld_pair', 'most_common_color', 'controlled_at_cast', 'kicked_with',
 ];
 
 /**
@@ -392,11 +392,6 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
       const n = Object.keys(g.turnLog.attacks ?? {}).filter((id) => (cond.anyone || g.objects[id]?.controller === controller) && ofKind(id)).length;
       return n >= Number(cond.n ?? 1);
     }
-    case 'to_graveyard_this_turn': {
-      // Case of the Gorgon's Kiss: "Three or more creature cards were put into graveyards from anywhere this turn."
-      const n = putIntoGraveyard(g).filter((r) => !r.token && (!cond.yours || r.owner === controller) && (!cond.cardType || r.types.includes(cond.cardType as string))).length;
-      return n >= Number(cond.n ?? 1);
-    }
     case 'opponent_has_more': {
       // Land Tax: "if an opponent controls more lands than you"
       const count = (p: PlayerId) => g.zones.battlefield.filter((id) => g.objects[id]!.controller === p && matchesFilter(g, g.objects[id]!, cond.filter as ObjectFilter, { controller: p, source: source ?? null })).length;
@@ -608,21 +603,17 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
       const total = g.zones.battlefield.map((id) => g.objects[id]!).filter((o) => o.controller === controller && chars(g, o).types.includes('Creature')).reduce((n, o) => n + Math.max(0, stat(g, o)), 0);
       return cmp(total, cond);
     }
-    case 'sacrificed_this_turn': {
-      // Elanor Gardner: "if you sacrificed a Food this turn"; Havengul Laboratory: "three or more Clues".
-      const f = (cond.filter ?? {}) as ObjectFilter;
-      const n = sacrificed(g, controller).filter((s) => (!f.types || f.types.some((t) => s.types.includes(t))) && (!f.subtypes || f.subtypes.some((t) => s.subtypes.includes(t)))).length;
-      return cmp(n, cond);
+    // A question asked of the turn's history (history.ts): "if a creature died this turn", "if you sacrificed a Food
+    // this turn", "if three or more cards left your graveyard this turn", "if no permanents left the battlefield this turn".
+    case 'happened': {
+      const [you] = cond.of ? refPlayers(ctx, cond.of as Ref) : [controller];
+      if (!you) return false;
+      const n = countHappened(g, cond as unknown as Asked, you, ctx.events.slice(loggedUpTo.get(ctx.events) ?? 0));
+      return cond.min === undefined && cond.max === undefined ? n > 0 : cmp(n, cond);
     }
     // Boomerang Basics: "If you controlled that permanent" — its controller as the spell began to resolve.
     case 'controlled_it':
       return refPlayers(ctx, { ref: 'controller_of', of: cond.of as Ref }).includes(controller);
-    // Gau, Feral Youth: "if a card left your graveyard this turn"; Bonecache Overseer: "three or more cards".
-    case 'left_graveyard': {
-      const types = ((cond.filter ?? {}) as ObjectFilter).types;
-      const n = leftGraveyard(g).filter((l) => l.owner === controller && (!types || types.some((t) => l.types.includes(t)))).length;
-      return cmp(n, cond);
-    }
     case 'entered_this_turn':
       // Celebration: "two or more nonland permanents entered the battlefield under your control this turn"
       return cmp(enteredThisTurn(g, controller, (cond.filter ?? {}) as ObjectFilter, source ?? undefined), cond);
@@ -707,11 +698,9 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
       // First Response: "if you lost life last turn" — the previous turn's log (none before the first turn).
       const log = cond.lastTurn ? g.lastTurnLog : g.turnLog;
       if (!log) return false;
-      // (What moved, was made or was done by a player is asked of the turn's history.)
+      // (What a player did — a crime, a search, a loyalty ability, descending — is asked of the turn's history.)
       const last = Boolean(cond.lastTurn);
       switch (cond.event) {
-        case 'creature_died':
-          return creatureDied(g, last);
         case 'opponent_damaged': {
           // Antagonism: "unless one of their opponents was dealt damage this turn" — that player's opponents.
           const whose = cond.of ? (refPlayers(ctx, cond.of as Ref)[0] ?? controller) : controller;
@@ -737,8 +726,6 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
           return loyaltyActivated(g, last).includes(controller);
         case 'opponent_gained_life':
           return log.gainedLife.some((p) => p !== controller);
-        case 'you_created_token':
-          return tokensCreated(g, controller, last) > 0;
         case 'opponent_cast':
           // "If an opponent cast a blue spell this turn" — any one opponent.
           return livePlayers(g).some(
@@ -781,18 +768,8 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
             const have = o.zone === 'battlefield' ? chars(g, o).types : faceOf(g, o).types;
             return !types.length || types.some((t) => have.includes(t));
           });
-        case 'your_permanent_left':
-          // Revolt: "if a permanent you controlled left the battlefield this turn"
-          return leftBattlefield(g, last).some((w) => w.controller === controller);
-        case 'nonland_left':
-          return nonlandLeft(g, last);
-        case 'your_creature_left':
-          // Tale of Momo: "if a creature left the battlefield under your control this turn".
-          return leftBattlefield(g, last).some((w) => w.controller === controller && w.types.includes('Creature'));
         case 'warped':
           return Boolean(log.warped);
-        case 'card_exiled':
-          return cardExiled(g, last);
         case 'you_committed_crime':
           return crimes(g, last).includes(controller);
         // Wave of Rats: "When this creature dies, if it dealt combat damage to a player this turn" — this object, on the
@@ -801,17 +778,11 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
           return Boolean(source && (log.playerDamagers ?? []).some((d) => d.source === source.id && d.player !== controller && (d.zcc === source.zcc || (source.zone !== 'battlefield' && d.zcc === source.zcc - 1))));
         case 'self_dealt_combat_damage':
           return Boolean(source && (log.combatDamagers ?? []).some((d) => d.source === source.id && (d.zcc === source.zcc || (source.zone !== 'battlefield' && d.zcc === source.zcc - 1))));
-        // Barrin, Tolarian Archmage: "if a permanent was put into your hand from the battlefield this turn".
-        case 'bounced_to_your_hand':
-          return returnedToHand(g, last).includes(controller);
         case 'opponent_searched':
           return searchedOwn(g, last).some((p) => p !== controller);
         // CR 700.11
         case 'you_descended':
           return descended(g, controller, last) > 0;
-        // Denethor: "if a creature died under your control this turn"
-        case 'your_creature_died':
-          return died(g, last).some((d) => d.controller === controller && d.types.includes('Creature'));
         default:
           return false;
       }

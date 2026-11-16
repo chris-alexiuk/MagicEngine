@@ -1330,7 +1330,7 @@ describe('staples (slices 100–108)', () => {
       trigger: { type: 'cast', who: 'opponent', nth: 1, nthOfKind: true, filter: { notTypes: ['Creature'] } },
       effects: [{ type: 'unless_pays', costX: { kind: 'stat', stat: 'power' } }],
     });
-    expect(parse('{T}: Draw a card. Activate only if you created a token this turn.', 'Artifact', 'Idol').abilities[0]).toMatchObject({ activateIf: { type: 'this_turn', event: 'you_created_token' } });
+    expect(parse('{T}: Draw a card. Activate only if you created a token this turn.', 'Artifact', 'Idol').abilities[0]).toMatchObject({ activateIf: { type: 'happened', what: 'created', filter: { controller: 'you' }, min: 1 } });
     expect(parse('Artifacts and creatures your opponents control enter tapped.', 'Enchantment', 'Obedience').abilities[0]).toMatchObject({ effect: { type: 'enter_tapped_others', filter: { types: ['Artifact', 'Creature'], controller: 'opponent' } } });
     expect(parse('{T}: You and target opponent each draw a card.', 'Artifact', 'Loran').abilities[0]).toMatchObject({ effects: [{ type: 'draw', who: { ref: 'you' } }, { type: 'draw', who: { ref: 'target', index: 0 } }] });
     expect(parse('Add {R} for each tapped land your opponents control.', 'Instant', 'Geyser').abilities[0]).toMatchObject({ effects: [{ type: 'add_mana', options: [['R']], times: { kind: 'count' } }] });
@@ -1634,8 +1634,8 @@ describe('slice 149', () => {
     expect(parse('When this creature enters, you may have it fight target creature you don\'t control.', 'Creature — Elf', 'A').abilities[0]).toMatchObject({ effects: [{ type: 'may', effects: [{ type: 'fight', a: { ref: 'self' } }] }] });
   });
   it('reads deaths this turn, the Theros Gods and "unless" restrictions', () => {
-    expect(parse('At the beginning of your end step, create a Treasure token for each nontoken creature that died this turn.', 'Creature — Cat', 'M').abilities[0]).toMatchObject({ effects: [{ type: 'create_token', amount: { kind: 'died_this_turn', nontoken: true } }] });
-    expect(parse('At the beginning of your end step, if two or more creatures died this turn, draw a card.', 'Creature — Cat', 'M').abilities[0]).toMatchObject({ condition: { type: 'amount', amount: { kind: 'died_this_turn' }, op: 'ge', n: 2 } });
+    expect(parse('At the beginning of your end step, create a Treasure token for each nontoken creature that died this turn.', 'Creature — Cat', 'M').abilities[0]).toMatchObject({ effects: [{ type: 'create_token', amount: { kind: 'happened', what: 'died', filter: { types: ['Creature'], token: false } } }] });
+    expect(parse('At the beginning of your end step, if two or more creatures died this turn, draw a card.', 'Creature — Cat', 'M').abilities[0]).toMatchObject({ condition: { type: 'happened', what: 'died', filter: { types: ['Creature'] }, min: 2 } });
     expect(parse("As long as your devotion to red is less than five, Purphoros isn't a creature.", 'Legendary Enchantment Creature — God', 'Purphoros, God of the Forge').abilities[0]).toMatchObject({
       effect: { type: 'continuous', affected: { ref: 'self' }, loseTypes: ['Creature'], condition: { type: 'amount', amount: { kind: 'devotion', colors: ['R'] }, op: 'le', n: 4 } },
     });
@@ -2021,7 +2021,7 @@ describe('slice 167', () => {
     expect(parse("Whenever a land's ability causes you to add one or more mana of the chosen color, add an additional one mana of that color.", 'Artifact', 'C').abilities[0]).toMatchObject({ trigger: { type: 'tapped_for_mana', producedColor: 'chosen' }, effects: [{ type: 'add_mana', options: [['chosen']] }] });
     expect(parse('No more than one creature can block each combat.', 'Artifact Creature — Construct', 'S').abilities[0]).toMatchObject({ effect: { type: 'combat_limit', what: 'block', amount: 1 } });
     expect(parse('No more than two creatures can attack you each combat.', 'Artifact', 'C').abilities[0]).toMatchObject({ effect: { type: 'combat_limit', what: 'attack', amount: 2, you: true } });
-    expect(parse('{B}, {T}: Target creature you control connives X, where X is the number of creatures that died this turn.', 'Artifact', 'S').abilities[0]).toMatchObject({ effects: [{ type: 'connive', amount: { kind: 'died_this_turn' } }] });
+    expect(parse('{B}, {T}: Target creature you control connives X, where X is the number of creatures that died this turn.', 'Artifact', 'S').abilities[0]).toMatchObject({ effects: [{ type: 'connive', amount: { kind: 'happened', what: 'died', filter: { types: ['Creature'] } } }] });
     expect(parse('~ deals five times X damage to each of up to X targets.', 'Sorcery', 'C').abilities[0]).toMatchObject({ targets: [{ what: 'any', countX: true, upTo: true }], effects: [{ type: 'deal_damage', amount: { kind: 'x', times: 5 } }] });
   });
   it('reads halves, rounded up or down', () => {
@@ -2394,7 +2394,7 @@ describe('slice 189', () => {
   it('reads counted "enters with" counters', () => {
     expect(parse('This creature enters with X +1/+1 counters on it, where X is the total toughness of other creatures you control.', 'Creature').abilities[0]).toMatchObject({ effect: { type: 'enters_with_counters', amount: 1, perEach: { kind: 'total_power', stat: 'toughness' } } });
     expect(parse('This creature enters with a number of +1/+1 counters on it equal to one plus the number of other creatures you control.', 'Creature').abilities[0]).toMatchObject({ effect: { perEach: { kind: 'count', plus: 1 } } });
-    expect(parse('This creature enters with a +1/+1 counter on it if a permanent left the battlefield under your control this turn.', 'Creature').abilities[0]).toMatchObject({ effect: { condition: { type: 'this_turn', event: 'your_permanent_left' } } });
+    expect(parse('This creature enters with a +1/+1 counter on it if a permanent left the battlefield under your control this turn.', 'Creature').abilities[0]).toMatchObject({ effect: { condition: { type: 'happened', what: 'left', filter: { controller: 'you' }, min: 1 } } });
     expect(parse('~ enters with a +1/+1 counter on him.', 'Legendary Creature', 'Hulk').abilities[0]).toMatchObject({ effect: { type: 'enters_with_counters', amount: 1 } });
   });
 });
@@ -2402,7 +2402,7 @@ describe('slice 189', () => {
 describe('slice 190', () => {
   it('reads descended and died-under-your-control conditions, two-event triggers and "each opponent controls"', () => {
     expect(parse('At the beginning of your end step, if you descended this turn, put a +1/+1 counter on ~.', 'Creature').abilities[0]).toMatchObject({ condition: { type: 'this_turn', event: 'you_descended' } });
-    expect(parse("~ can't attack or block unless a creature died under your control this turn.", 'Creature').abilities[0]).toMatchObject({ effect: { condition: { type: 'not', cond: { type: 'this_turn', event: 'your_creature_died' } } } });
+    expect(parse("~ can't attack or block unless a creature died under your control this turn.", 'Creature').abilities[0]).toMatchObject({ effect: { condition: { type: 'not', cond: { type: 'happened', what: 'died', filter: { types: ['Creature'], controller: 'you' }, min: 1 } } } });
     expect(parse('At the beginning of your upkeep and whenever you cast a green spell, put a charge counter on ~.', 'Artifact').abilities[0]).toMatchObject({ trigger: { type: 'either', of: [{ type: 'phase', step: 'upkeep' }, { type: 'cast', filter: { colors: ['G'] } }] } });
     expect(parse('At the beginning of your upkeep, put a +1/+1 counter on each creature each opponent controls.', 'Creature').abilities[0]).toMatchObject({ effects: [{ type: 'add_counters', what: { ref: 'all', filter: { controller: 'opponent' } } }] });
   });
@@ -2600,7 +2600,7 @@ describe('slice 200', () => {
     expect(parse('When this creature dies, each opponent gets a number of rad counters equal to its power.', 'Creature').abilities[0]).toMatchObject({ effects: [{ type: 'get_counters', counter: 'rad', amount: { kind: 'stat' } }] });
     expect(parse('Whenever one or more creatures you control deal combat damage to one or more players, proliferate.', 'Creature').abilities[0]).toMatchObject({ trigger: { type: 'combat_damage_batch', to: 'any' } });
     expect(parse('Whenever a creature you control with power 2 or less attacks, this enchantment deals 1 damage to the player or planeswalker that creature is attacking.', 'Enchantment').abilities[0]).toMatchObject({ effects: [{ type: 'deal_damage', to: { ref: 'attacked_by' } }] });
-    expect(parse('At the beginning of each end step, create X 1/1 white Spirit creature tokens with flying, where X is the number of tokens you created this turn.', 'Creature').abilities[0]).toMatchObject({ effects: [{ type: 'create_token', amount: { kind: 'tokens_created_this_turn' } }] });
+    expect(parse('At the beginning of each end step, create X 1/1 white Spirit creature tokens with flying, where X is the number of tokens you created this turn.', 'Creature').abilities[0]).toMatchObject({ effects: [{ type: 'create_token', amount: { kind: 'happened', what: 'created', filter: { controller: 'you' } } }] });
   });
 });
 
@@ -2653,7 +2653,7 @@ describe('slice 203', () => {
     expect(parse('Price of Progress deals damage to each player equal to twice the number of nonbasic lands that player controls.', 'Instant', 'Price of Progress').abilities[0]).toMatchObject({ effects: [{ type: 'deal_damage', amount: { kind: 'count', filter: { controlledBy: { ref: 'each_player' } }, times: 2 }, to: { ref: 'players', who: 'each' } }] });
     expect(parse("{T}: Hidetsugu deals damage to each player equal to half that player's life total, rounded down.", 'Legendary Creature', 'Hidetsugu').abilities[0]).toMatchObject({ effects: [{ type: 'deal_damage', amount: { kind: 'life', who: { ref: 'each_player' }, half: 'down' } }] });
     expect(parse("Double target player's life total.", 'Instant').abilities[0]).toMatchObject({ effects: [{ type: 'set_life', value: 'double' }] });
-    expect(parse('Destroy target creature if it has mana value 2 or less.\nRevolt — Destroy that creature if it has mana value 4 or less instead if a permanent left the battlefield under your control this turn.', 'Instant', 'Push').abilities[0]).toMatchObject({ effects: [{ type: 'if', cond: { type: 'this_turn', event: 'your_permanent_left' }, effects: [{ type: 'if', cond: { filter: { manaValue: { n: 4 } } } }], else: [{ type: 'if', cond: { filter: { manaValue: { n: 2 } } } }] }] });
+    expect(parse('Destroy target creature if it has mana value 2 or less.\nRevolt — Destroy that creature if it has mana value 4 or less instead if a permanent left the battlefield under your control this turn.', 'Instant', 'Push').abilities[0]).toMatchObject({ effects: [{ type: 'if', cond: { type: 'happened', what: 'left', filter: { controller: 'you' }, min: 1 }, effects: [{ type: 'if', cond: { filter: { manaValue: { n: 4 } } } }], else: [{ type: 'if', cond: { filter: { manaValue: { n: 2 } } } }] }] });
     expect(parse("{T}, Sacrifice a creature: Create a Food token. If the sacrificed creature's toughness was 4 or greater, create two Food tokens instead.", 'Artifact').abilities[0]).toMatchObject({ effects: [{ type: 'if', cond: { amount: { kind: 'cost_lki', stat: 'toughness' }, op: 'ge', n: 4 } }] });
     expect(parse("Exile target creature you control, then return it to the battlefield under its owner's control. If that creature is a Bird, Frog, Otter, or Rat, draw a card.", 'Sorcery').abilities[0]).toMatchObject({ effects: [{ type: 'move' }, { type: 'move' }, { type: 'if', cond: { type: 'is', filter: { subtypes: expect.arrayContaining(['Bird', 'Rat']) } } }] });
   });

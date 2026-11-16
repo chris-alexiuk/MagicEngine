@@ -14,9 +14,11 @@ export const SCHEMA_VERSION = 2 as const;
 export { SUBTYPES } from './subtypes.js';
 export * from './qualities.js';
 export { CONDITIONAL_STATICS, COUNTED_FIELDS, COUNTER_LASTING, DOABLE, DURATIONS, LASTING_EFFECTS, type Duration } from './durations.js';
+export { HAPPENED_FILTER, HAPPENINGS, type HappeningKind } from './happenings.js';
 export { isTokenFace, linkTokenArt, tokenArtFinder, tokenTextKey } from './token-art.js';
 export { NODE_FIELDS, ONE_CARD_PARAMETERS, nodeFields, oneCardParameters, parameterUse, undeclaredFields } from './node-fields.js';
 import { qualitiesRead } from './qualities.js';
+import type { HappeningKind } from './happenings.js';
 
 export type Color = 'W' | 'U' | 'B' | 'R' | 'G';
 export const COLORS: readonly Color[] = ['W', 'U', 'B', 'R', 'G'];
@@ -798,13 +800,9 @@ export type AmountExpr = (
   | { kind: 'discarded_this_turn'; /** Dream Salvage: "the number of cards target opponent discarded this turn". */ player?: Ref }
   /** All-Fates Scroll: "the number of differently named lands you control". */
   | { kind: 'distinct_names'; filter: ObjectFilter }
-  /** Fraying Sanity: "the number of cards put into their graveyard from anywhere this turn". */
-  | { kind: 'to_graveyard_this_turn'; player: Ref }
   | { kind: 'spells_cast_this_turn'; player?: Ref; /** Call Forth the Tempest: their total mana value (`other`: but this spell's). */ totalMv?: true; other?: true; filter?: ObjectFilter; /** Thrasta: "each other spell cast this turn" — by anyone. */ anyone?: true; /** Delightful Discovery: "each spell your opponents have cast this turn". */ opponents?: true }
   /** Rowdy Research: "for each creature that attacked this turn" — anyone's (`mine`: "you attacked with"). */
   | { kind: 'attackers_this_turn'; mine?: true }
-  /** The Balrog, Durin's Bane: "for each permanent sacrificed this turn" — by anyone. */
-  | { kind: 'sacrificed_this_turn'; types?: string[]; /** Sawblade Skinripper: "the permanents you sacrificed this turn". */ mine?: true }
   /** Eris, Roar of the Storm: "for each different mana value among instant and sorcery cards in your graveyard". */
   | { kind: 'distinct_mana_values'; filter: ObjectFilter }
   /** Golden Ratio: "for each different power among creatures you control" (on the battlefield). */
@@ -822,8 +820,6 @@ export type AmountExpr = (
   | { kind: 'countered_this_way' }
   /** CR 702.82b: "for each creature it devoured" — as its source entered. */
   | { kind: 'devoured' }
-  /** Thalisse, Reverent Medium: "the number of tokens you created this turn". */
-  | { kind: 'tokens_created_this_turn' }
   /** Myr Battlesphere: "you may tap X untapped Myr you control" — how many were tapped. */
   | { kind: 'tapped_this_way' }
   /** "the number of cards discarded this way"; `max`: "the greatest number of cards a player discarded this way" (Windfall). */
@@ -835,9 +831,12 @@ export type AmountExpr = (
   | { kind: 'damage_this_way' }
   /** CR 120.10: "the amount of excess damage dealt to that creature this way". */
   | { kind: 'excess_this_way' }
-  /** "for each creature that died this turn", "the number of Zubera that died this turn" (as they last existed). */
-  | { kind: 'died_this_turn'; types?: string[]; subtypes?: string[]; notSubtypes?: string[]; nontoken?: true; controller?: 'you' | 'opponent'; /** Caller of the Claw: "put into your graveyard from the battlefield" — owned by you. */ owner?: 'you' }
-  | { kind: 'left_this_turn'; types?: string[]; controller?: 'you' | 'opponent' }
+  /**
+   * A question asked of the turn's history (happenings.ts): "for each creature that died this turn", "the number of
+   * permanents you sacrificed this turn", "the number of cards put into their graveyard from anywhere this turn".
+   * `card`: cards, as printed, and no tokens. `of`: the player "you" and "an opponent" are told from, in the filter.
+   */
+  | { kind: 'happened'; what: HappeningKind; filter?: ObjectFilter; card?: true; of?: Ref; lastTurn?: true }
   /** "the greatest power among creatures you control", "the greatest mana value among cards in your graveyard" (0 if none). */
   | { kind: 'greatest'; stat: 'power' | 'toughness' | 'mana_value'; filter: ObjectFilter }
   /** CR 702.23a (rampage): "for each creature blocking it beyond the first" — creatures blocking it, less `beyond`. */
@@ -1651,9 +1650,9 @@ export const CORE_NODES = {
     'harness', 'ring_tempts', 'venture', 'take_initiative', 'reveal_until', 'give_gift', 'become_copy', 'extra_combat', 'phase_out', 'phase_out_proliferated', 'return_from_each_graveyard', 'chain_copy', 'lock_untap', 'unlock', 'must_block', 'unattach', 'remove_from_combat', 'prevent_chosen_source', 'cant_block_attacker', 'untap_chosen', 'craft_return', 'damage_unpreventable', 'roll_die', 'vote', 'repeat', 'prohibit_casting', 'retarget', 'player_effect', 'choose_one', 'blight', 'forage', 'reflexive', 'next_spell', 'double_counters', 'swap_graveyard', 'sylvan_library', 'cast_from_hand', 'reveal_top', 'wheel', 'each_deals', 'keep_choose', 'turn_trigger', 'cast_paid', 'reanimate_attach', 'sacrifice_linked', 'delayed_leave', 'airbend', 'tempting_offer',
   ],
   conditions: [
-    'greatest_power', 'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'spells_last_turn',
-    'counters', 'is', 'has_attached', 'monstrous', 'harnessed', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned', 'day_night', 'saddled', 'max_speed', 'solved', 'paired', 'to_graveyard_this_turn', 'has_designation', 'compare_stats', 'won_flip', 'before_attackers', 'step', 'prepared', 'won_clash', 'ring_bearer', 'chose_other_ring_bearer', 'completed_dungeon', 'initiative',
-    'top_card', 'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes', 'opponent_has_more', 'attacked_with', 'was_type', 'was_attacking', 'had_keyword', 'sacrificed_this_turn', 'not', 'early_turn', 'distinct_names', 'unique_name', 'greatest_mv', 'first_combat', 'cast_in_main_phase', 'cast_off_sorcery_timing', 'chosen_word', 'most_of', 'lki_was', 'cast_named_before', 'same_name', 'ability_resolutions', 'attacking_you', 'left_graveyard', 'controlled_it', 'spent_colors', 'attack_power', 'activated_times', 'tribute_paid', 'meld_pair', 'most_common_color', 'controlled_at_cast', 'kicked_with',
+    'greatest_power', 'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'happened', 'spells_last_turn',
+    'counters', 'is', 'has_attached', 'monstrous', 'harnessed', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned', 'day_night', 'saddled', 'max_speed', 'solved', 'paired', 'has_designation', 'compare_stats', 'won_flip', 'before_attackers', 'step', 'prepared', 'won_clash', 'ring_bearer', 'chose_other_ring_bearer', 'completed_dungeon', 'initiative',
+    'top_card', 'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes', 'opponent_has_more', 'attacked_with', 'was_type', 'was_attacking', 'had_keyword', 'not', 'early_turn', 'distinct_names', 'unique_name', 'greatest_mv', 'first_combat', 'cast_in_main_phase', 'cast_off_sorcery_timing', 'chosen_word', 'most_of', 'lki_was', 'cast_named_before', 'same_name', 'ability_resolutions', 'attacking_you', 'controlled_it', 'spent_colors', 'attack_power', 'activated_times', 'tribute_paid', 'meld_pair', 'most_common_color', 'controlled_at_cast', 'kicked_with',
   ],
   statics: [
     'x_color', 'ignore_landwalk', 'designation',
@@ -1669,7 +1668,7 @@ export const CORE_NODES = {
   ],
   costs: ['exert_self', 'sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards', 'remove_counters_self', 'station', 'return_unblocked', 'tap_creatures', 'craft', 'collect_evidence', 'return_permanents', 'reveal_from_hand', 'behold', 'blight', 'forage', 'exile_self_hand', 'discard_hand', 'exile_self_battlefield', 'put_counters_self', 'mill', 'return_self', 'remove_counters', 'process', 'exile_top'],
   /** Counted amounts (AmountExpr kinds). */
-  amounts: ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way', 'life_this_turn', 'excess_this_way', 'mana_spent', 'sum', 'max', 'unspent_mana', 'attackers_this_turn', 'sacrificed_this_turn', 'distinct_mana_values', 'drawn_this_turn', 'tokens_created_this_turn', 'tapped_this_way', 'counters_among', 'counters_removed', 'attacks_this_turn', 'convoked', 'sacrificed_to_cast', 'discover_shortfall', 'source_damage_this_turn', 'entered_this_turn', 'discarded_this_turn', 'to_graveyard_this_turn', 'distinct_names', 'flips_won', 'speed', 'drawn_this_way', 'left_this_turn', 'creature_types_among', 'distinct_powers', 'most_sharing_type', 'ability_resolutions', 'countered_this_way', 'devoured'],
+  amounts: ['count', 'happened', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'damage_this_way', 'life_this_turn', 'excess_this_way', 'mana_spent', 'sum', 'max', 'unspent_mana', 'attackers_this_turn', 'distinct_mana_values', 'drawn_this_turn', 'tapped_this_way', 'counters_among', 'counters_removed', 'attacks_this_turn', 'convoked', 'sacrificed_to_cast', 'discover_shortfall', 'source_damage_this_turn', 'entered_this_turn', 'discarded_this_turn', 'distinct_names', 'flips_won', 'speed', 'drawn_this_way', 'creature_types_among', 'distinct_powers', 'most_sharing_type', 'ability_resolutions', 'countered_this_way', 'devoured'],
   /** Keyword abilities (CR 702) the engine applies. Others are recorded but resolved by players. */
   keywords: [
     'flying', 'first_strike', 'double_strike', 'deathtouch', 'defender', 'flash', 'haste', 'hexproof', 'hexproof_from',

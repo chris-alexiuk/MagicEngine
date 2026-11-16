@@ -2,6 +2,7 @@ import type { AmountExpr, ConditionNode, ObjectFilter, Ref } from '@mtg/schema';
 import { attempt, type Binder } from './binder.js';
 import { parseFilter, parseObjectRef, parsePlayerRef, type ParsedFilter } from './nouns.js';
 import { movedThisWay, parseCount } from './amounts.js';
+import { happenedCondition } from './happened.js';
 import { capitalise, COLOR_WORDS, isSubtype, parseAmount, subtypeOf, TYPE_NOUNS } from './words.js';
 import { HAS_DESIGNATION } from '../designations.js';
 
@@ -1013,34 +1014,23 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     // March of the Canonized: "if your devotion to white and black is seven or greater".
     if (colors.every(Boolean) && typeof n === 'number') return { type: 'amount', amount: { kind: 'devotion', colors: colors as never }, ...(devotion[4] ? { op: 'le', n: n - 1 } : { op: 'ge', n }) };
   }
-  // "if two or more creatures died this turn", "if three or more Zubera died this turn"
-  // Gimli: "two or more creatures died under your control this turn".
-  const died = /^(\w+ or more) (.+?) died ((?:under (?:your|an opponent's) control )?)this turn$/.exec(t);
-  if (died) {
-    const c = compare(died[1]!);
-    const amount = c ? parseCount(`the number of ${died[2]} that died ${died[3]}this turn`, b) : null;
-    if (c && amount) return { type: 'amount', amount, ...c };
-  }
+  // What happened this turn, asked of the turn's history: "a creature died this turn", "two or more creatures died under
+  // your control this turn", "you've sacrificed a Food this turn", "a card left your graveyard this turn", "no creatures
+  // died this turn" (happened.ts).
+  const asked = happenedCondition(t, b);
+  if (asked) return asked;
   // Path to the Festival: "if there are three or more basic land types among lands you control" (domain).
   const domainN = /^there are (two|three|four|five) or more basic land types among lands you control$/.exec(t);
   if (domainN) return { type: 'amount', amount: { kind: 'domain' }, op: 'ge', n: parseAmount(domainN[1]!) as number };
-  // Titan Hunter: "if no creatures died this turn".
-  if (t === 'no creatures died this turn') return { type: 'not', cond: { type: 'this_turn', event: 'creature_died' } };
   // Things that happened this turn.
   const events: Record<string, string> = {
-    'a creature died this turn': 'creature_died',
     'you attacked this turn': 'you_attacked',
     'you attacked with a creature this turn': 'you_attacked',
     'you gained life this turn': 'you_gained_life',
     'an opponent lost life this turn': 'opponent_lost_life',
     'you cast a noncreature spell this turn': 'you_cast_noncreature',
     "you've cast a noncreature spell this turn": 'you_cast_noncreature',
-    // Revolt; void (CR 702.185c: "a spell was warped this turn").
-    'a permanent you controlled left the battlefield this turn': 'your_permanent_left',
-    'a permanent left the battlefield under your control this turn': 'your_permanent_left',
-    'a nonland permanent left the battlefield this turn': 'nonland_left',
-    'a creature left the battlefield under your control this turn': 'your_creature_left',
-    'a creature you controlled left the battlefield this turn': 'your_creature_left',
+    // CR 702.185c (void): "a spell was warped this turn".
     'a spell was warped this turn': 'warped',
     // CR 700.13
     "you've committed a crime this turn": 'you_committed_crime',
@@ -1048,8 +1038,6 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     // CR 700.11
     'you descended this turn': 'you_descended',
     "you've descended this turn": 'you_descended',
-    'a creature died under your control this turn': 'your_creature_died',
-    'a creature you controlled died this turn': 'your_creature_died',
     // Archive Trap: "If an opponent searched their library this turn" (CR 701.23).
     'an opponent searched their library this turn': 'opponent_searched',
   };
@@ -1061,22 +1049,6 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   if (t === "you've cast both a creature spell and a noncreature spell this turn") {
     return { type: 'and', all: [{ type: 'this_turn', event: 'you_cast', filter: { types: ['Creature'] }, min: 1 }, { type: 'this_turn', event: 'you_cast', filter: { notTypes: ['Creature'] }, min: 1 }] };
   }
-  // White Glove Gourmand: "if another Human died under your control this turn"; Cult Conscript: "a non-Skeleton
-  // creature"; Sidequest: Hunt the Mark: "a creature died under an opponent's control this turn".
-  const diedOne = /^(?:another|an?) (.+?) died under (your|an opponent's) control this turn$/.exec(t);
-  if (diedOne) {
-    const amount = parseCount(`the number of ${diedOne[1]}s that died under ${diedOne[2]} control this turn`, b);
-    if (amount && amount.kind === 'died_this_turn') return { type: 'amount', amount, op: 'ge', n: 1 };
-  }
-  // Gau, Feral Youth: "if a card left your graveyard this turn"; Syrix: "a creature card"; Bonecache Overseer: "three
-  // or more cards".
-  const leftGy = /^(a|one or more|two or more|three or more) (card|creature card)s? left your graveyard this turn$/.exec(t);
-  if (leftGy) {
-    const min = { a: 1, 'one or more': 1, 'two or more': 2, 'three or more': 3 }[leftGy[1] as 'a'];
-    return { type: 'left_graveyard', min, ...(leftGy[2] === 'creature card' ? { filter: { types: ['Creature'] } } : {}) };
-  }
-  // Ennis, Debate Moderator: "if one or more cards were put into exile this turn".
-  if (/^(?:a card was|one or more cards were) put into exile this turn$/.test(t)) return { type: 'this_turn', event: 'card_exiled' };
   // Canyon Crab: "if you haven't cast a spell from your hand this turn".
   if (/^you (?:haven't|have not|didn't) cast a spell from your hand this turn$/.test(t)) return { type: 'not', cond: { type: 'this_turn', event: 'you_cast', from: 'hand', min: 1 } };
   // Curious Obsession: "if you didn't attack with a creature this turn".
@@ -1166,16 +1138,6 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   // Kaya, Intangible Slayer: "Exile target creature or enchantment. If it wasn't an Aura, …" — the card, now in exile.
   const wasntSub = /^it wasn't an? (Aura|Equipment|Vehicle|Saga)$/.exec(t);
   if (wasntSub && b.it && b.it.ref === 'target') return { type: 'is', of: b.it, filter: { notSubtypes: [wasntSub[1]!] } };
-  // Elanor Gardner: "if you sacrificed a Food this turn"; Havengul Laboratory: "three or more Clues"; Goblin Blast-Runner:
-  // "a permanent".
-  const sacThisTurn = /^you(?:'ve)? sacrificed (a|an|one or more|two or more|three or more) (.+?) this turn$/.exec(t);
-  if (sacThisTurn) {
-    const min = { a: 1, an: 1, 'one or more': 1, 'two or more': 2, 'three or more': 3 }[sacThisTurn[1] as 'a'];
-    const word = sacThisTurn[2]!.replace(/s$/, '');
-    const pf = word === 'permanent' ? { filter: {} as ObjectFilter } : parseFilter(word, b);
-    const keys = pf ? Object.keys(pf.filter).filter((k) => k !== 'types' && k !== 'subtypes') : ['x'];
-    if (pf && !keys.length) return { type: 'sacrificed_this_turn', filter: pf.filter, min };
-  }
   // Zurgo Stormrender: "Whenever a creature token you control leaves the battlefield, draw a card if it was attacking." —
   // as it last existed (CR 506.4: only during combat).
   // Wilhelt, the Rotcleaver: "if it didn't have decayed" — the creature that died, as it last existed.
@@ -1270,19 +1232,6 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     const n = parseAmount(creaturesAttacked[1]!);
     return typeof n === 'number' ? { type: 'attacked_with', n, anyone: true } : null;
   }
-  // Ichor Shade: "if an artifact or creature was put into a graveyard from the battlefield this turn" — as it last existed.
-  const fromField = /^an? (artifact|creature|enchantment|land|planeswalker|artifact or creature|creature or artifact|permanent) (?:was|were) put into a graveyard from the battlefield this turn$/.exec(t);
-  if (fromField) {
-    const types = fromField[1] === 'permanent' ? ['Artifact', 'Battle', 'Creature', 'Enchantment', 'Land', 'Planeswalker'] : fromField[1]!.split(' or ').map(capitalise);
-    return { type: 'amount', amount: { kind: 'died_this_turn', types }, op: 'ge', n: 1 } as ConditionNode;
-  }
-  // Case of the Gorgon's Kiss: "Three or more creature cards were put into graveyards from anywhere this turn."
-  // Macabre Reconstruction: "if a creature card was put into your graveyard from anywhere this turn".
-  const toYards = /^(?:(a|an)|(\w+) or more) (creature |artifact |land )?cards? (?:was|were) put into (graveyards|your graveyard) from anywhere this turn$/.exec(t);
-  if (toYards) {
-    const n = toYards[1] ? 1 : parseAmount(toYards[2]!);
-    return typeof n === 'number' ? { type: 'to_graveyard_this_turn', n, ...(toYards[3] ? { cardType: capitalise(toYards[3].trim()) } : {}), ...(toYards[4] === 'your graveyard' ? { yours: true } : {}) } : null;
-  }
   // Skullcage: "unless they have exactly three or exactly four cards in hand".
   const exactHand = /^(?:they|that player) (?:has|have) exactly (\w+)(?: or exactly (\w+))? cards? in (?:hand|their hand)$/.exec(t);
   if (exactHand && b.player) {
@@ -1353,8 +1302,6 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     if (more[1] !== 'an opponent' && !player) return null;
     return { type: 'opponent_has_more', filter: pf.filter, ...(player ? { player } : {}), ...(more[2] ? { by: parseAmount(more[2]) } : {}) };
   }
-  if (t === "you created a token this turn" || t === "you've created a token this turn") return { type: 'this_turn', event: 'you_created_token' };
-  if (t === 'a permanent was put into your hand from the battlefield this turn') return { type: 'this_turn', event: 'bounced_to_your_hand' };
   if (/^(?:it|~) dealt combat damage to a player this turn$/.test(t) && (!b.it || b.it.ref === 'self' || b.it.ref === 'trigger_object')) return { type: 'this_turn', event: 'self_dealt_combat_damage' };
   // Whirling Dervish: "if this creature dealt damage to an opponent this turn".
   if (/^(?:it|~) dealt damage to an opponent this turn$/.test(t) && (!b.it || b.it.ref === 'self')) return { type: 'this_turn', event: 'self_dealt_damage_to_opponent' };
