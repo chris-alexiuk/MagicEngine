@@ -2,6 +2,7 @@ import { isRingBearer } from './ring.js';
 import type { AttackTaxNode, DamageFilter, ObjectFilter, StaticAbility } from '@mtg/schema';
 import { abilitiesOf, canUseTapAbilities, chars, hasKeyword, hasProtectionFrom, hasRule, hasType, matchesFilter, objectAbilities, power, staticConditionHolds, toughness } from './characteristics.js';
 import { fitsDamage, type DamageAbout } from './damage-filter.js';
+import { attacksBy } from './history.js';
 import { payDuringResolution } from './payment.js';
 import { planAutoTap } from './autotap.js';
 import { parseManaCost } from './mana.js';
@@ -183,8 +184,7 @@ export function attackRestriction(g: GameState, o: GameObject, target: AttackTar
 function otherRestriction(g: GameState, o: GameObject, target: AttackTarget): string | null {
   // Port Razer: "can't attack a player it has already attacked this turn".
   if (target.kind === 'player' && hasRule(g, o, 'cant_attack_same_player')) {
-    const rec = g.turnLog.attackedPlayers?.[o.id];
-    if (rec && rec.zcc === o.zcc && rec.players.includes(target.player)) return `${nameOf(g, o)} can’t attack a player it has already attacked this turn.`;
+    if (attacksBy(g, o).some((a) => a.target.kind === 'player' && a.target.player === target.player)) return `${nameOf(g, o)} can’t attack a player it has already attacked this turn.`;
   }
   // Sandwurm Convergence: "Creatures with flying can't attack you or planeswalkers you control." (CR 508.1c)
   for (const id of abilitySources(g)) {

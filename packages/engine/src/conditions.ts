@@ -5,7 +5,7 @@ import { amountOf, refObjects, refPlayers } from './resolve.js';
 import type { GameEvent, GameObject, GameState, LKIStats, ObjectId, PlayerId } from './types.js';
 import { faceOf, livePlayers, manaValueOf, meldPartners, nameOf, notePlusCounters, pairedPartner, zoneList } from './zones.js';
 import { isRingBearer } from './ring.js';
-import { castMatches, casts, countHappened, crimes, descended, lifeChanged, loyaltyActivated, otherCasts, searchedOwn, type Asked } from './history.js';
+import { attackers, attacksMade, castMatches, casts, combatHits, countHappened, crimes, damageDealt, descended, discards, lifeChanged, loyaltyActivated, otherCasts, searchedOwn, type Asked } from './history.js';
 
 /** Condition tags the engine evaluates (schema CORE_NODES.conditions). */
 export const CONDITION_TYPES: readonly string[] = [
@@ -15,18 +15,14 @@ export const CONDITION_TYPES: readonly string[] = [
 ];
 
 /**
- * What the game keeps count of during a turn: damage, attacks, marks on objects and "the first time this turn". (What
- * moved, was made, was sacrificed or was done by a player, the spells cast and the life gained and lost are asked of
- * the turn's history instead: history.ts.)
+ * What the game keeps count of during a turn that isn't a happening to ask about: marks on objects (what entered, what
+ * was targeted, where counters were put), cards drawn, and once-a-turn permissions used. (What moved, was made, was
+ * sacrificed, was discarded or was done by a player, the spells cast, the life gained and lost, the damage dealt and
+ * the attacks made are asked of the turn's history instead: history.ts.)
  */
 export interface TurnLog {
-  attacked: PlayerId[];
   /** Combat phases begun this turn (Genji Glove: "if it's the first combat phase of the turn"). */
   combatPhases?: number;
-  /** Damage dealt to each player this turn (Spinerock Knoll). */
-  damageTaken?: Record<PlayerId, number>;
-  /** Chandra's Incinerator: the noncombat part of it. */
-  noncombatDamageTaken?: Record<PlayerId, number>;
   /** Valiant Rescuer: the cycling abilities activated this turn, in order (who, which card, the stack entry). */
   cycled?: { player: PlayerId; source: ObjectId; entry: string }[];
   /** Whispering Snitch: the players who've surveilled this turn. */
@@ -37,8 +33,6 @@ export interface TurnLog {
   drawStepDrew?: PlayerId[];
   /** Cards the active player has actually drawn in this turn's draw step (Orcish Bowmasters). */
   drawStepCards?: number;
-  /** Players dealt damage this turn (CR 702.54a bloodthirst). */
-  damagedPlayers: PlayerId[];
   /** Cards each player has drawn this turn. */
   drawn?: Record<PlayerId, number>;
   /** Which cards ("cards in your hand drawn this turn", Sylvan Library). */
@@ -49,22 +43,12 @@ export interface TurnLog {
   enteredAs?: Record<ObjectId, { types: string[]; subtypes: string[]; supertypes: string[]; token?: true }>;
   /** Who has targeted each object this turn (valiant: "for the first time each turn"). */
   targeted?: Record<ObjectId, PlayerId[]>;
-  /** The sources that dealt damage to each permanent this turn. */
-  damagedBy?: Record<ObjectId, ObjectId[]>;
-  /** Spear of Heliod: the sources (id:zcc) that dealt damage to each player this turn (combat damage marked "c:"). */
-  playerDamagedBy?: Record<PlayerId, string[]>;
   /** Danny Pink: the first counters event this turn for each object, keyed "id:zcc". */
   firstCounters?: Record<string, GameEvent>;
   /** Fairgrounds Trumpeter: controllers of permanents +1/+1 counters were put on this turn. */
   plusCountersOn?: PlayerId[];
   /** Sigardian Paladin: players who put +1/+1 counters on a creature this turn. */
   plusCountersBy?: PlayerId[];
-  /** Damage dealt this turn by each source, keyed "id:zcc". */
-  dealtDamage?: Record<string, number>;
-  /** How many times each creature has been declared as an attacker this turn. */
-  attacks?: Record<ObjectId, number>;
-  /** The object each attacking creature was as it attacked (CR 400.7: "that attacked this turn"). */
-  attackedAs?: Record<ObjectId, number>;
   /** Lurrus: the "once during each of your turns" graveyard permissions used this turn (source id:zcc). */
   graveyardCasts?: string[];
   /** Darksteel Monolith: the once-each-turn free-cast permissions used this turn (source id:zcc). */
@@ -73,20 +57,10 @@ export interface TurnLog {
   abilityResolutions?: Record<string, number>;
   /** Dragon Whelp: how many times each ability has been activated this turn (by source and text). */
   abilityActivations?: Record<string, number>;
-  /** Rose, Cutthroat Raider: the players each player attacked with creatures this turn. */
-  playersAttackedBy?: Record<PlayerId, PlayerId[]>;
-  /** Port Razer: the players each creature (as this object) attacked this turn. */
-  attackedPlayers?: Record<ObjectId, { zcc: number; players: PlayerId[] }>;
-  /** Cards discarded this turn, as the objects they became (mayhem). */
-  discarded?: { id: ObjectId; zcc: number; player?: PlayerId }[];
-  /** Sources that dealt combat damage to a player this turn, as they were then (prowl, freerunning). */
-  combatDamagers?: { player: PlayerId; controller: PlayerId; types: string[]; subtypes: string[]; commander: boolean; legendary?: boolean; source?: ObjectId; zcc?: number }[];
-  /** Damage of any kind dealt to players this turn, by source (Whirling Dervish). */
-  playerDamagers?: { player: PlayerId; source: ObjectId; zcc: number; controller: PlayerId }[];
 }
 
 export function newTurnLog(): TurnLog {
-  return { attacked: [], damagedPlayers: [], drawn: {} };
+  return { drawn: {} };
 }
 
 /** How far into each event list the turn log has recorded (the rest happened during the resolution still under way). */
@@ -122,55 +96,10 @@ export function logTurnEvents(g: GameState, events: GameEvent[]): void {
         }
         break;
       }
-      case 'attacks_declared':
-        if (e.attacks.length && !log.attacked.includes(g.active)) log.attacked.push(g.active);
-        for (const a of e.attacks) (log.attacks ??= {})[a.attacker] = ((log.attacks ??= {})[a.attacker] ?? 0) + 1;
-        for (const a of e.attacks) if (g.objects[a.attacker]) (log.attackedAs ??= {})[a.attacker] = g.objects[a.attacker]!.zcc;
-        for (const a of e.attacks) {
-          const o = g.objects[a.attacker];
-          if (!o || a.target.kind !== 'player') continue;
-          const mine = ((log.playersAttackedBy ??= {})[g.active] ??= []);
-          if (!mine.includes(a.target.player)) mine.push(a.target.player);
-          const rec = (log.attackedPlayers ??= {})[a.attacker];
-          if (rec && rec.zcc === o.zcc) {
-            if (!rec.players.includes(a.target.player)) rec.players.push(a.target.player);
-          } else log.attackedPlayers[a.attacker] = { zcc: o.zcc, players: [a.target.player] };
-        }
-        break;
       case 'counters': {
         const o = g.objects[e.object];
         if (o && e.delta > 0) (log.firstCounters ??= {})[`${o.id}:${o.zcc}`] ??= e;
         if (o && e.delta > 0 && e.counter === '+1/+1' && o.zone === 'battlefield') notePlusCounters(g, o, e.by ?? o.controller);
-        break;
-      }
-      case 'damage':
-        if (e.to.kind === 'player' && !log.damagedPlayers.includes(e.to.player)) log.damagedPlayers.push(e.to.player);
-        if (e.to.kind === 'player') (log.damageTaken ??= {})[e.to.player] = (log.damageTaken[e.to.player] ?? 0) + e.amount;
-        if (e.to.kind === 'player' && !e.combat) (log.noncombatDamageTaken ??= {})[e.to.player] = (log.noncombatDamageTaken[e.to.player] ?? 0) + e.amount;
-        // Whirling Dervish: "if this creature dealt damage to an opponent this turn" — any damage, by this object.
-        if (e.to.kind === 'player' && g.objects[e.source]) (log.playerDamagers ??= []).push({ player: e.to.player, source: e.source, zcc: g.objects[e.source]!.zcc, controller: g.objects[e.source]!.controller });
-        if (e.to.kind === 'player' && e.combat && g.objects[e.source]) {
-          const s = g.objects[e.source]!;
-          const c = chars(g, s);
-          (log.combatDamagers ??= []).push({ player: e.to.player, controller: s.controller, types: [...c.types], subtypes: [...c.subtypes], commander: Boolean(s.commander), ...(c.supertypes.includes('Legendary') ? { legendary: true } : {}), source: s.id, zcc: s.zcc });
-        }
-        if (e.to.kind === 'permanent') {
-          const by = ((log.damagedBy ??= {})[e.to.object] ??= []);
-          if (!by.includes(e.source)) by.push(e.source);
-        }
-        if (e.to.kind === 'player' && g.objects[e.source]) {
-          const by = ((log.playerDamagedBy ??= {})[e.to.player] ??= []);
-          const key = `${e.combat ? 'c:' : ''}${e.source}:${e.sourceZcc ?? g.objects[e.source]!.zcc}`;
-          if (!by.includes(key)) by.push(key);
-        }
-        if (g.objects[e.source]) {
-          const key = `${e.source}:${e.sourceZcc ?? g.objects[e.source]!.zcc}`;
-          (log.dealtDamage ??= {})[key] = (log.dealtDamage[key] ?? 0) + e.amount;
-        }
-        break;
-      case 'discarded': {
-        const o = g.objects[e.object];
-        if (o) (log.discarded ??= []).push({ id: o.id, zcc: o.zcc, player: e.player });
         break;
       }
       case 'cast': {
@@ -354,17 +283,13 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
         const self = source && declared.some((d) => d.id === source.id && d.zcc === (ctx.sourceZcc ?? source.zcc));
         return Boolean(self) && declared.filter((d) => d.id !== source!.id).length >= Number(cond.n ?? 1);
       }
-      // Deepway Navigator: "with three or more Merfolk" — by the card's own types (a changeling is every type, CR 702.73a);
-      // read from the face, not the characteristics this static is helping to work out.
-      const ofKind = (id: ObjectId) => {
-        if (!cond.subtype) return true;
-        const o = g.objects[id];
-        if (!o) return false;
-        const face = faceOf(g, o);
-        return face.subtypes.includes(String(cond.subtype)) || face.keywords.some((k) => k.id === 'changeling');
-      };
-      const n = Object.keys(g.turnLog.attacks ?? {}).filter((id) => (cond.anyone || g.objects[id]?.controller === controller) && ofKind(id)).length;
-      return n >= Number(cond.n ?? 1);
+      // "If you attacked with three or more creatures this turn": the creatures that player attacked with, each once —
+      // one that has died or ceased to exist since was attacked with all the same.
+      // Deepway Navigator: "with three or more Merfolk" — as each was when it attacked (a changeling is every type,
+      // CR 702.73a). Read from the turn's history, not from characteristics this static is helping to work out.
+      const kind = cond.subtype ? String(cond.subtype) : undefined;
+      const with_ = attackers(attacksMade(g, false, unrecorded(ctx.events))).filter((a) => (cond.anyone || a.by === controller) && (!kind || Boolean(a.was?.subtypes.includes(kind))));
+      return with_.length >= Number(cond.n ?? 1);
     }
     case 'opponent_has_more': {
       // Land Tax: "if an opponent controls more lands than you"
@@ -385,24 +310,28 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
       const best = Math.max(0, ...others);
       return cond.orTied ? mine >= best : mine > best;
     }
-    case 'discarded_this_turn':
+    case 'discarded_this_turn': {
+      const discarded = discards(g, false, unrecorded(ctx.events));
       // The Raven Man: "if a player discarded a card this turn" (or an opponent, or you).
-      if (cond.who) return (g.turnLog.discarded ?? []).some((d) => d.player !== undefined && (cond.who === 'any' || (cond.who === 'you') === (d.player === controller)));
+      if (cond.who) return discarded.some((d) => cond.who === 'any' || (cond.who === 'you') === (d.player === controller));
       // CR 702.187b (mayhem): "As long as you discarded this card this turn" — it's still the card that was discarded.
-      return Boolean(source && (g.turnLog.discarded ?? []).some((d) => d.id === source.id && d.zcc === source.zcc));
+      return Boolean(source && discarded.some((d) => d.id === source.id && d.zcc === source.zcc));
+    }
     case 'combat_damage_by': {
+      // The sources that dealt combat damage to a player this turn, each as it was when it did.
       // CR 702.76a (prowl): "a source you controlled that had any of this spell's creature types";
       // CR 702.173a (freerunning): "an Assassin creature or a commander under your control".
       // Blitzball: "if an opponent was dealt combat damage by a legendary creature this turn" — anyone's creature.
-      if (cond.anyone) return (g.turnLog.combatDamagers ?? []).some((d) => d.types.includes('Creature') && d.subtypes.includes(String(cond.subtype)));
-      if (cond.toOpponent) return (g.turnLog.combatDamagers ?? []).some((d) => d.player !== controller && d.types.includes('Creature') && (!cond.legendary || d.legendary));
-      const mine = (g.turnLog.combatDamagers ?? []).filter((d) => d.controller === controller);
+      const hits = combatHits(g, false, unrecorded(ctx.events));
+      if (cond.anyone) return hits.some((d) => d.was.types.includes('Creature') && d.was.subtypes.includes(String(cond.subtype)));
+      if (cond.toOpponent) return hits.some((d) => d.player !== controller && d.was.types.includes('Creature') && (!cond.legendary || d.was.supertypes.includes('Legendary')));
+      const mine = hits.filter((d) => d.was.controller === controller);
       if (cond.sharesType) {
         const f = source ? faceOf(g, source) : null;
         const kinds = f && (f.types.includes('Creature') || f.types.includes('Kindred') || f.types.includes('Tribal')) ? f.subtypes : [];
-        return mine.some((d) => d.subtypes.some((s) => kinds.includes(s)));
+        return mine.some((d) => d.was.subtypes.some((s) => kinds.includes(s)));
       }
-      return mine.some((d) => (cond.subtype !== undefined && d.types.includes('Creature') && d.subtypes.includes(String(cond.subtype))) || (cond.orCommander && d.commander));
+      return mine.some((d) => (cond.subtype !== undefined && d.was.types.includes('Creature') && d.was.subtypes.includes(String(cond.subtype))) || Boolean(cond.orCommander && d.was.commander));
     }
     case 'amount':
       // "if X is 5 or more" (ravenous, CR 702.156a); Thassa's Oracle: "if X is greater than or equal to the number of
@@ -672,23 +601,28 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
       // First Response: "if you lost life last turn" — the previous turn's log (none before the first turn).
       const log = cond.lastTurn ? g.lastTurnLog : g.turnLog;
       if (!log) return false;
-      // (What a player did — a spell cast, a crime, a search, a loyalty ability, descending — and the life gained and
-      // lost are asked of the turn's history: with what the spell or ability now resolving has done, CR 608.2h.)
+      // (What a player did — a spell cast, an attack, a crime, a search, a loyalty ability, descending — and the life
+      // gained and lost and the damage dealt are asked of the turn's history: with what the spell or ability now
+      // resolving has done, CR 608.2h.)
       const last = Boolean(cond.lastTurn);
       const fresh = last ? undefined : unrecorded(ctx.events);
       const cast = () => casts(g, last, fresh);
+      const dealt = () => damageDealt(g, last, fresh);
       const about = { controller, source: source ?? null };
+      // "If this creature dealt damage this turn": this object — on the battlefield just now, if it has left (one zone
+      // change ago).
+      const asSource = (zcc: number | undefined) => Boolean(source && (zcc === source.zcc || (source.zone !== 'battlefield' && zcc === source.zcc - 1)));
       switch (cond.event) {
         case 'opponent_damaged': {
           // Antagonism: "unless one of their opponents was dealt damage this turn" — that player's opponents.
           const whose = cond.of ? (refPlayers(ctx, cond.of as Ref)[0] ?? controller) : controller;
-          return (log.damagedPlayers ?? []).some((p) => p !== whose);
+          return dealt().some((d) => d.to.kind === 'player' && d.to.player !== whose);
         }
         // Command the Stage: "if an opponent was dealt noncombat damage last turn".
         case 'opponent_noncombat_damaged':
-          return Object.entries(log.noncombatDamageTaken ?? {}).some(([p, n]) => p !== controller && n > 0);
+          return dealt().some((d) => d.to.kind === 'player' && d.to.player !== controller && !d.combat && d.amount > 0);
         case 'you_attacked':
-          return log.attacked.includes(controller);
+          return attacksMade(g, last, fresh).some((a) => a.by === controller);
         // Sigardian Paladin: "As long as you've put one or more +1/+1 counters on a creature this turn".
         case 'you_put_plus_counters':
           return (log.plusCountersBy ?? []).includes(controller);
@@ -697,7 +631,7 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
           return (log.plusCountersOn ?? []).includes(controller);
         // Charging Cinderhorn: "if no creatures attacked this turn".
         case 'anyone_attacked':
-          return log.attacked.length > 0;
+          return attacksMade(g, last, fresh).length > 0;
         case 'you_gained_life':
           return lifeChanged(g, 1, last, fresh).includes(controller);
         case 'you_activated_loyalty':
@@ -746,12 +680,12 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
           return cast().some((c) => c.warped);
         case 'you_committed_crime':
           return crimes(g, last).includes(controller);
-        // Wave of Rats: "When this creature dies, if it dealt combat damage to a player this turn" — this object, on the
-        // battlefield just now (one zone change ago if it has left).
+        // Whirling Dervish: "if this creature dealt damage to an opponent this turn" — any damage, by this object.
         case 'self_dealt_damage_to_opponent':
-          return Boolean(source && (log.playerDamagers ?? []).some((d) => d.source === source.id && d.player !== controller && (d.zcc === source.zcc || (source.zone !== 'battlefield' && d.zcc === source.zcc - 1))));
+          return dealt().some((d) => d.was && d.to.kind === 'player' && d.to.player !== controller && d.source === source?.id && asSource(d.zcc));
+        // Wave of Rats: "When this creature dies, if it dealt combat damage to a player this turn".
         case 'self_dealt_combat_damage':
-          return Boolean(source && (log.combatDamagers ?? []).some((d) => d.source === source.id && (d.zcc === source.zcc || (source.zone !== 'battlefield' && d.zcc === source.zcc - 1))));
+          return dealt().some((d) => d.was && d.combat && d.to.kind === 'player' && d.source === source?.id && asSource(d.zcc));
         case 'opponent_searched':
           return searchedOwn(g, last).some((p) => p !== controller);
         // CR 700.11

@@ -33,7 +33,7 @@ import { RulesError, type AttackTarget, type ChoiceAnswer, type DamageRecipient,
 import { cantLose, cantWin, playerLoses } from './flow.js';
 import { battlefieldZcc, discardCard, drawCard, faceOf, livePlayers, manaValueOf, meldCards, meldPartners, moveObject, moveTogether, nameOf, nextPlayer, setTapped, zoneList, abilitySources, pairedPartner, type PlannedMove } from './zones.js';
 import { castableCard, castDuringResolution } from './actions.js';
-import { castMatches, casts, putIntoGraveyard, tokensCreated } from './history.js';
+import { attacksBy, castMatches, casts, putIntoGraveyard, tokensCreated } from './history.js';
 
 /**
  * Handlers for the core AST nodes (schema CORE_NODES). Each effect reads its
@@ -5620,8 +5620,8 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
       if (t.defender === 'you' && (target.kind === 'player' ? target.player !== check.controller : check.g.objects[target.object]?.controller !== check.controller)) return [];
       // "Whenever a creature attacks you"
       if (t.defender === 'you_only' && (target.kind !== 'player' || target.player !== check.controller)) return [];
-      // "Whenever ~ attacks for the first time each turn"
-      if (t.firstEachTurn && (check.g.turnLog.attacks?.[o.id] ?? 0) !== 1) return [];
+      // "Whenever ~ attacks for the first time each turn" — this attack is the only one it has made, as this object.
+      if (t.firstEachTurn && attacksBy(check.g, o).length !== 1) return [];
       // CR 702.171b: "attacks while saddled" — saddled this turn, before it attacked.
       if (t.saddled && o.saddledTurn !== check.g.turn) return [];
       // "Whenever a creature attacks enchanted player"

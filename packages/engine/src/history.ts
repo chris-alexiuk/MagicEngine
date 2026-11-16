@@ -1,6 +1,6 @@
 import { HAPPENED_FILTER, type Color, type HappeningKind, type KeywordInstance, type ObjectFilter } from '@mtg/schema';
-import { chars, matchesFilter, type Characteristics, type FilterContext } from './characteristics.js';
-import type { GameEvent, GameObject, GameState, ObjectId, PlayerId, ZoneName } from './types.js';
+import { chars, creatureTypesOf, matchesFilter, type Characteristics, type FilterContext } from './characteristics.js';
+import type { AttackTarget, DamageRecipient, GameEvent, GameObject, GameState, ObjectId, PlayerId, ZoneName } from './types.js';
 import { manaValueOf } from './zones.js';
 
 /**
@@ -9,13 +9,15 @@ import { manaValueOf } from './zones.js';
  * turn", "for each permanent you sacrificed this turn", "if a card left your graveyard this turn" are questions asked
  * of this one history — a new one of their kind needs nothing recorded for it as the game goes.
  *
- * So are the questions about spells cast and about life: each cast is kept with the spell as it was cast, in the order
- * they were cast (storm, CR 702.40a: "each spell cast before it this turn"; "your second spell each turn"; "if you've
- * cast another blue spell this turn"), each gain or loss of life as it happened — and how many, how much and who are
- * worked out when asked.
+ * So are the questions about spells cast, life, damage, attacks and discards. Each cast is kept with the spell as it
+ * was cast, in the order they were cast (storm, CR 702.40a: "each spell cast before it this turn"; "your second spell
+ * each turn"; "if you've cast another blue spell this turn"); each gain or loss of life as it happened; each time
+ * damage was dealt, with its source as it then was (prowl, CR 702.76a: "a source that … had any of this spell's
+ * creature types"); each creature declared as an attacker, with what it attacked and what it was; each card discarded.
+ * How many, how much and who are worked out when asked.
  *
- * (The turn log in conditions.ts keeps the rest for now: damage, attacks and discards, marks on objects — what entered,
- * what was targeted — and once-a-turn permissions used.)
+ * (The turn log in conditions.ts keeps what isn't a happening to ask about: marks on objects — what entered, what was
+ * targeted, where counters were put — cards drawn, and once-a-turn permissions used.)
  *
  * Nothing here is hidden information, so every player's view of the game carries it whole: a move is kept with the
  * card it was only if all players saw that card at one end of it. A card exiled face down is kept as that and no
@@ -43,8 +45,13 @@ export interface Was {
   supertypes: string[];
   /** Its card types as printed on the face it showed (a land that was a creature is still printed a Land). */
   printed: string[];
-  /** Which object it was (CR 400.7: one that changes zones is a new object) — kept for a spell cast. */
+  /**
+   * Which object it was (CR 400.7: one that changes zones is a new object) — kept where a question tells one from
+   * another: a spell cast, a source of damage, a creature that attacked, a card discarded (as the object it became).
+   */
   zcc?: number;
+  /** A source of damage: whether it was a commander (freerunning, CR 702.173a). */
+  commander?: true;
 }
 
 /** A spell as it was cast: what a question later in the turn is told of it, whatever has become of the card since. */
@@ -71,10 +78,12 @@ export interface SpellWas {
 /** One thing that happened: the event, and what it was about. */
 export interface Happening {
   e: GameEvent;
-  /** What moved, was made or was sacrificed; the spell cast. */
+  /** What moved, was made, was sacrificed or was discarded; the spell cast; the source of damage; the creature that attacked. */
   was?: Was;
   /** A spell cast. */
   spell?: SpellWas;
+  /** An attack: one creature of those declared (CR 508.1), what it attacked, and who attacked with it. */
+  attack?: { attacker: ObjectId; target: AttackTarget; by: PlayerId };
 }
 
 /**
@@ -124,6 +133,25 @@ function entries(g: GameState, events: GameEvent[]): Happening[] {
       case 'cast':
         list.push({ e, ...asCast(g, e) });
         break;
+      case 'damage': {
+        // The source as it dealt the damage — if it is still an object at all.
+        const s = g.objects[e.source];
+        list.push(s ? { e, was: { ...asItIs(g, s, chars(g, s)), ...(s.commander ? { commander: true as const } : {}) } } : { e });
+        break;
+      }
+      case 'attacks_declared':
+        // One entry for each creature declared: the creature as it attacked; the attacking player is the active one (CR 506.2).
+        for (const a of e.attacks) {
+          const o = g.objects[a.attacker];
+          list.push({ e, attack: { attacker: a.attacker, target: a.target, by: g.active }, ...(o ? { was: asItIs(g, o, chars(g, o)) } : {}) });
+        }
+        break;
+      case 'discarded': {
+        // The card as the object it became (mayhem, CR 702.187b: "if you discarded it this turn").
+        const o = g.objects[e.object];
+        list.push(o ? { e, was: asItIs(g, o, chars(g, o), e.player) } : { e });
+        break;
+      }
       case 'life':
       case 'crime':
       case 'searched':
@@ -141,7 +169,9 @@ function asItIs(g: GameState, o: GameObject, c: Characteristics, controller: Pla
   // to know.)
   const at = o.copyOf ?? { card: o.card, face: o.face ?? 0 };
   const face = g.cards[at.card]?.faces[at.face];
-  return { id: o.id, zcc: o.zcc, controller, owner: o.owner, token: Boolean(o.token), types: [...c.types], subtypes: [...c.subtypes], supertypes: [...c.supertypes], printed: [...(o.faceDown ? c.types : (face?.types ?? c.types))] };
+  // CR 702.73a: with changeling it is every creature type, however it came by it.
+  const subtypes = c.keywords.some((k) => k.id === 'changeling') ? [...new Set([...c.subtypes, ...creatureTypesOf(c)])] : [...c.subtypes];
+  return { id: o.id, zcc: o.zcc, controller, owner: o.owner, token: Boolean(o.token), types: [...c.types], subtypes, supertypes: [...c.supertypes], printed: [...(o.faceDown ? c.types : (face?.types ?? c.types))] };
 }
 
 /** A spell as it was cast (CR 601.2): its characteristics on the stack, its mana value there, how it was cast. */
@@ -258,6 +288,16 @@ function ofType<T extends GameEvent['type']>(g: GameState, type: T, lastTurn: bo
   return (more.length ? [...kept, ...more] : kept) as (Happening & { e: Extract<GameEvent, { type: T }> })[];
 }
 const moves = (g: GameState, lastTurn: boolean, fresh?: GameEvent[]): Moved[] => ofType(g, 'moved', lastTurn, fresh).filter((h): h is Moved => Boolean(h.was));
+
+// What a list of entries is read as — the turn's casts, its damage, its attacks — worked out once for each list.
+const READ = new WeakMap<object, Map<string, readonly unknown[]>>();
+function read<H, T>(list: H[], as: string, each: (h: H) => T[]): readonly T[] {
+  let m = READ.get(list);
+  if (!m) READ.set(list, (m = new Map()));
+  let v = m.get(as) as readonly T[] | undefined;
+  if (!v) m.set(as, (v = list.flatMap(each)));
+  return v;
+}
 // (A melded permanent leaves as its two cards, CR 712.21: the permanent is told once, by the event not marked as the
 // second card. Questions about cards — put into a graveyard, exiled — count both.)
 const permanent = (h: Moved) => h.e.from === 'battlefield' && !h.e.meldPart;
@@ -374,11 +414,11 @@ export interface CastSpell {
 }
 
 /** The spells cast this turn (or the last), in the order they were cast (CR 702.40a: storm counts those before it). */
-export const casts = (g: GameState, lastTurn = false, fresh?: GameEvent[]): CastSpell[] =>
-  ofType(g, 'cast', lastTurn, fresh).map((h) => {
+export const casts = (g: GameState, lastTurn = false, fresh?: GameEvent[]): readonly CastSpell[] =>
+  read(ofType(g, 'cast', lastTurn, fresh), 'casts', (h) => {
     const w = h.was!;
     const s = h.spell;
-    return { event: h.e, player: h.e.player, id: h.e.object, ...(w.zcc !== undefined ? { zcc: w.zcc } : {}), ...(s?.from ? { from: s.from } : {}), mv: s?.mv ?? 0, warped: Boolean(s?.warped), spent: h.e.manaSpent ?? 0, was: w, ...(s ? { spell: s } : {}) };
+    return [{ event: h.e, player: h.e.player, id: h.e.object, ...(w.zcc !== undefined ? { zcc: w.zcc } : {}), ...(s?.from ? { from: s.from } : {}), mv: s?.mv ?? 0, warped: Boolean(s?.warped), spent: h.e.manaSpent ?? 0, was: w, ...(s ? { spell: s } : {}) }];
   });
 
 const AS_CAST = new WeakMap<SpellWas, Characteristics>();
@@ -420,7 +460,7 @@ export function castMatches(g: GameState, c: CastSpell, filter: ObjectFilter | u
  * `asZcc`: which object the question comes from, when that isn't the object as it now is — a triggered ability whose
  * source has left since (a storm spell countered in response; a creature gone before its enters ability resolves).
  */
-export function ownCast(list: CastSpell[], o: GameObject, asZcc: number = o.zcc): number {
+export function ownCast(list: readonly CastSpell[], o: GameObject, asZcc: number = o.zcc): number {
   // That object, or the spell it had just been; else the spell on the stack; else the spell this permanent was cast as.
   const zccs = asZcc !== o.zcc ? [asZcc, asZcc - 1] : o.zone === 'stack' ? [asZcc] : o.zone === 'battlefield' && o.cast ? [asZcc - 1] : [];
   if (!zccs.length) return -1;
@@ -432,7 +472,7 @@ export function ownCast(list: CastSpell[], o: GameObject, asZcc: number = o.zcc)
 }
 
 /** Which of the turn's casts a spell was (or -1): the cast of that object, or failing that the last of that card. */
-export function castOf(list: CastSpell[], ref: { id: ObjectId; zcc?: number }): number {
+export function castOf(list: readonly CastSpell[], ref: { id: ObjectId; zcc?: number }): number {
   let last = -1;
   for (let i = list.length - 1; i >= 0; i--) {
     const c = list[i]!;
@@ -444,7 +484,7 @@ export function castOf(list: CastSpell[], ref: { id: ObjectId; zcc?: number }): 
 }
 
 /** The casts but this object's own: "other spells you've cast this turn". */
-export const otherCasts = (list: CastSpell[], o: GameObject | null | undefined, asZcc?: number): CastSpell[] => {
+export const otherCasts = (list: readonly CastSpell[], o: GameObject | null | undefined, asZcc?: number): readonly CastSpell[] => {
   const own = o ? ownCast(list, o, asZcc ?? o.zcc) : -1;
   return own < 0 ? list : list.filter((_, i) => i !== own);
 };
@@ -461,3 +501,77 @@ export const lifeChange = (g: GameState, player: PlayerId, sign: 1 | -1, lastTur
 export const lifeChanged = (g: GameState, sign: 1 | -1, lastTurn = false, fresh?: GameEvent[]): PlayerId[] => [
   ...new Set(ofType(g, 'life', lastTurn, fresh).flatMap((h) => (Math.sign(h.e.delta) === sign ? [h.e.player] : []))),
 ];
+
+// ---------------------------------------------------------------------------
+// Damage.
+// ---------------------------------------------------------------------------
+
+/** One time damage was dealt this turn, with its source as it then was. */
+export interface Dealt {
+  source: ObjectId;
+  /** Which object the source was as it dealt the damage (CR 400.7) — unknown if it had ceased to be one. */
+  zcc?: number;
+  to: DamageRecipient;
+  amount: number;
+  combat: boolean;
+  /** The source as it was — absent if it had ceased to be an object before the damage was recorded. */
+  was?: Was;
+}
+
+/** Each time damage was dealt this turn (or the last), in order. */
+export const damageDealt = (g: GameState, lastTurn = false, fresh?: GameEvent[]): readonly Dealt[] =>
+  read(ofType(g, 'damage', lastTurn, fresh), 'damage', (h) => {
+    // (Combat damage says which object dealt it; for the rest it is the object the source was when recorded.)
+    const zcc = h.e.sourceZcc ?? h.was?.zcc;
+    return [{ source: h.e.source, ...(zcc !== undefined ? { zcc } : {}), to: h.e.to, amount: h.e.amount, combat: h.e.combat, ...(h.was ? { was: h.was } : {}) }];
+  });
+
+/** The damage one object has dealt this turn, as that object (CR 400.7): "~ dealt damage this turn", "… to you this turn". */
+export const dealtBy = (g: GameState, o: { id: ObjectId; zcc: number }, lastTurn = false, fresh?: GameEvent[]): Dealt[] =>
+  damageDealt(g, lastTurn, fresh).filter((d) => d.was && d.source === o.id && d.zcc === o.zcc);
+
+/** How much damage a player was dealt this turn (or the last) — all of it, or only what wasn't combat damage. */
+export const damageTaken = (g: GameState, player: PlayerId, lastTurn = false, fresh?: GameEvent[], noncombat = false): number =>
+  damageDealt(g, lastTurn, fresh).reduce((n, d) => n + (d.to.kind === 'player' && d.to.player === player && !(noncombat && d.combat) ? d.amount : 0), 0);
+
+/** Combat damage dealt to a player this turn by a source that was an object: who was hit, and the source as it was. */
+export const combatHits = (g: GameState, lastTurn = false, fresh?: GameEvent[]): { player: PlayerId; source: ObjectId; zcc?: number; was: Was }[] =>
+  damageDealt(g, lastTurn, fresh).flatMap((d) => (d.combat && d.to.kind === 'player' && d.was ? [{ player: d.to.player, source: d.source, ...(d.zcc !== undefined ? { zcc: d.zcc } : {}), was: d.was }] : []));
+
+// ---------------------------------------------------------------------------
+// Attacks.
+// ---------------------------------------------------------------------------
+
+/** One creature declared as an attacker this turn. */
+export interface Attack {
+  attacker: ObjectId;
+  target: AttackTarget;
+  /** The attacking player. */
+  by: PlayerId;
+  /** The creature as it attacked — absent if it had ceased to be an object before the attack was recorded. */
+  was?: Was;
+}
+
+/** Each creature declared as an attacker this turn (or the last), in order — once for each time it was. */
+export const attacksMade = (g: GameState, lastTurn = false, fresh?: GameEvent[]): readonly Attack[] =>
+  read(ofType(g, 'attacks_declared', lastTurn, fresh), 'attacks', (h) => (h.attack ? [{ ...h.attack, ...(h.was ? { was: h.was } : {}) }] : []));
+
+/** The times one object attacked this turn, as that object (CR 400.7): "that attacked this turn", "for each time it has attacked". */
+export const attacksBy = (g: GameState, o: { id: ObjectId; zcc: number }, fresh?: GameEvent[]): Attack[] => attacksMade(g, false, fresh).filter((a) => a.attacker === o.id && a.was?.zcc === o.zcc);
+
+/** The creatures that attacked this turn, each object once ("if you attacked with three or more creatures this turn"). */
+export const attackers = (list: readonly Attack[]): Attack[] => {
+  const seen = new Set<string>();
+  return list.filter((a) => {
+    const key = `${a.attacker}:${a.was?.zcc ?? ''}`;
+    return !seen.has(key) && Boolean(seen.add(key));
+  });
+};
+
+// ---------------------------------------------------------------------------
+// Discards.
+// ---------------------------------------------------------------------------
+
+/** The cards discarded this turn (or the last), each as the object it became, and by whom. */
+export const discards = (g: GameState, lastTurn = false, fresh?: GameEvent[]): readonly { id: ObjectId; zcc: number; player: PlayerId }[] =>
+  read(ofType(g, 'discarded', lastTurn, fresh), 'discards', (h) => (h.was?.zcc !== undefined ? [{ id: h.was.id, zcc: h.was.zcc, player: h.e.player }] : []));

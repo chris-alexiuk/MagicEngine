@@ -141,6 +141,12 @@ export function sacrificedEarlier(g: GameState, player: PlayerId, types: string[
   g.history.push({ e: { type: 'sacrificed', object: id, player }, was: { id, controller: player, token: false, types, subtypes, supertypes: [], printed: types } });
 }
 
+/** Test-only setup: `player` discarded a card earlier this turn, as the turn's history has it. */
+export function discardedEarlier(g: GameState, player: PlayerId): void {
+  const id = `earlier-${(g.history ??= []).length}`;
+  g.history.push({ e: { type: 'discarded', object: id, player }, was: { id, zcc: 0, controller: player, owner: player, token: false, types: [], subtypes: [], supertypes: [], printed: [] } });
+}
+
 /** Test-only setup: `player` lost (or, with a positive `delta`, gained) life earlier this turn, as the turn's history has it. */
 export function lifeChangedEarlier(g: GameState, player: PlayerId, delta = -1): void {
   (g.history ??= []).push({ e: { type: 'life', player, delta, life: g.players[player]!.life } });

@@ -21,7 +21,7 @@ import type {
 } from '@mtg/schema';
 import { evalCondition } from './conditions.js';
 import { amountOf } from './resolve.js';
-import { casts, putIntoGraveyard } from './history.js';
+import { attacksBy, casts, damageDealt, dealtBy, putIntoGraveyard } from './history.js';
 import type { GameObject, GameState, LKIStats, ManaColor, PlayerId } from './types.js';
 import { abilitySources, battlefieldZcc, faceOf, manaValueOf, nameOf, pairedPartner } from './zones.js';
 
@@ -1036,13 +1036,11 @@ export function matchesFilter(
   if (f.historic && !(c.types.includes('Artifact') || c.supertypes.includes('Legendary') || c.subtypes.includes('Saga'))) return false;
   if (f.notHistoric && (c.types.includes('Artifact') || c.supertypes.includes('Legendary') || c.subtypes.includes('Saga'))) return false;
   // "a creature dealt damage by ~ this turn"
-  if (f.damagedBySource && !(ctx.source && (g.turnLog.damagedBy?.[o.id] ?? []).includes(ctx.source.id))) return false;
-  // Spear of Heliod: "target creature that dealt damage to you this turn" (Witch-king: combat damage only).
-  if (f.dealtDamageToYou) {
-    const by = g.turnLog.playerDamagedBy?.[ctx.controller] ?? [];
-    if (!by.some((k) => k.replace(/^c:/, '') === `${o.id}:${o.zcc}` && (f.dealtDamageToYou !== 'combat' || k.startsWith('c:')))) return false;
-  }
-  if (f.attackedThisTurn && g.turnLog.attackedAs?.[o.id] !== o.zcc) return false;
+  if (f.damagedBySource && !(ctx.source && damageDealt(g).some((d) => d.to.kind === 'permanent' && d.to.object === o.id && d.source === ctx.source!.id))) return false;
+  // Spear of Heliod: "target creature that dealt damage to you this turn" (Witch-king: combat damage only) — as this
+  // object (CR 400.7).
+  if (f.dealtDamageToYou && !dealtBy(g, o).some((d) => d.to.kind === 'player' && d.to.player === ctx.controller && (f.dealtDamageToYou !== 'combat' || d.combat))) return false;
+  if (f.attackedThisTurn && !attacksBy(g, o).length) return false;
   if (f.notCopy && o.spellCopy) return false;
   if (f.castFromZone && !(o.zone === 'stack' && o.cast?.from === f.castFromZone)) return false;
   if (f.notCastFromHand && o.cast?.from === 'hand') return false;
@@ -1052,7 +1050,7 @@ export function matchesFilter(
   // "target creature that player controls" — off the battlefield, its owner (CR 108.4a).
   if (f.controllerPlayer !== undefined && (o.zone === 'battlefield' ? controller : o.owner) !== f.controllerPlayer) return false;
   // Avenging Arrow: "target creature that dealt damage this turn".
-  if (f.dealtDamageThisTurn && !((g.turnLog.dealtDamage ?? {})[`${o.id}:${o.zcc}`] ?? 0)) return false;
+  if (f.dealtDamageThisTurn && !dealtBy(g, o).some((d) => d.amount > 0)) return false;
   // Vengeful Ancestor: "a goaded creature" (CR 701.15) — by an effect, or a static "is goaded".
   if (f.goaded && !(o.goadedBy?.length || c.combat.some((r) => r.goaded))) return false;
   // Brought Back: "that were put there from the battlefield this turn" — its latest move this turn, and it's still there.
@@ -1065,7 +1063,7 @@ export function matchesFilter(
   }
   // CR 701.60: "all suspected creatures", "if it's not suspected".
   if (f.suspected !== undefined && (o.zone === 'battlefield' && o.suspected !== undefined) !== f.suspected) return false;
-  if (f.controllerHitBySource && !(ctx.source && (g.turnLog.combatDamagers ?? []).some((d) => d.source === ctx.source!.id && d.zcc === ctx.source!.zcc && d.player === (ctx.lastController ?? o.controller)))) return false;
+  if (f.controllerHitBySource && !(ctx.source && dealtBy(g, ctx.source).some((d) => d.combat && d.to.kind === 'player' && d.to.player === (ctx.lastController ?? o.controller)))) return false;
   if (f.controller === 'you' && controller !== ctx.controller) return false;
   if ((f.controller === 'opponent' || f.controller === 'not_you') && controller === ctx.controller) return false;
   if (f.controller === 'enchanted' && (!ctx.source?.attachedToPlayer || controller !== ctx.source.attachedToPlayer)) return false;

@@ -1,7 +1,7 @@
 import type { Amount, AmountExpr, EffectNode, ObjectFilter, Ref } from '@mtg/schema';
 import { chars, colorsAmong, creatureTypesOf, filterZones, hasType, matchesFilter, power, toughness } from './characteristics.js';
 import { enteredThisTurn, unrecorded } from './conditions.js';
-import { castMatches, castOf, casts, countHappened, lifeChange, otherCasts, ownCast } from './history.js';
+import { attackers, attacksBy, attacksMade, castMatches, castOf, casts, combatHits, countHappened, damageDealt, damageTaken, dealtBy, discards, lifeChange, otherCasts, ownCast } from './history.js';
 import { runEffect, type EffectContext } from './registry.js';
 import { checkingOnResolution, isLegalTarget, targetingAs, withPriorTargets, withTargetX, withTriggerInfo } from './targets.js';
 import type { ChoiceAnswer, DamageRecipient, GameEvent, GameObject, GameState, ObjectId, PlayerId, Resolution, StackEntry, TargetRef } from './types.js';
@@ -486,9 +486,9 @@ function count(ctx: EffectContext, e: AmountExpr): number {
           (!e.controlsMore || controlledCount(ctx, p, e.controlsMore as ObjectFilter) > controlledCount(ctx, ctx.controller, e.controlsMore as ObjectFilter)) &&
           (!e.controlsFewer || controlledCount(ctx, p, e.controlsFewer as ObjectFilter) < controlledCount(ctx, ctx.controller, e.controlsFewer as ObjectFilter)) &&
           // Tymna the Weaver: "the number of opponents that were dealt combat damage this turn"
-          (!e.combatDamaged || (g.turnLog.combatDamagers ?? []).some((d) => d.player === p)) &&
+          (!e.combatDamaged || combatHits(g, false, unrecorded(ctx.events)).some((d) => d.player === p)) &&
           // Gnoll War Band: "each opponent who was dealt damage this turn".
-          (!e.damaged || g.turnLog.damagedPlayers.includes(p)),
+          (!e.damaged || damageDealt(g, false, unrecorded(ctx.events)).some((d) => d.to.kind === 'player' && d.to.player === p)),
       ).length;
     }
     case 'devotion':
@@ -537,7 +537,7 @@ function count(ctx: EffectContext, e: AmountExpr): number {
     }
     case 'attackers_this_turn':
       // Rowdy Research: "each creature that attacked this turn"; Search Party Captain: "each creature you attacked with".
-      return Object.keys(g.turnLog.attacks ?? {}).filter((id) => !e.mine || g.objects[id]?.controller === ctx.controller).length;
+      return attackers(attacksMade(g, false, unrecorded(ctx.events))).filter((a) => !e.mine || a.by === ctx.controller).length;
     // A question asked of the turn's history (history.ts): "for each creature that died this turn", "the number of
     // permanents you sacrificed this turn", "the number of cards put into their graveyard from anywhere this turn".
     case 'happened': {
@@ -570,12 +570,11 @@ function count(ctx: EffectContext, e: AmountExpr): number {
     }
     // Change of Fortune: "draw a card for each card you've discarded this turn".
     case 'discarded_this_turn': {
-      // Counting what this resolution just discarded too ("Discard your hand, then draw a card for each …").
-      const fresh = unrecorded(ctx.events);
       // Dream Salvage: "the number of cards target opponent discarded this turn".
       const who = e.player ? (refPlayers(ctx, e.player as Ref)[0] ?? null) : ctx.controller;
       if (!who) return 0;
-      return (g.turnLog.discarded ?? []).filter((d) => d.player === who).length + fresh.filter((ev) => ev.type === 'discarded' && ev.player === who).length;
+      // Counting what this resolution just discarded too ("Discard your hand, then draw a card for each …").
+      return discards(g, false, unrecorded(ctx.events)).filter((d) => d.player === who).length;
     }
     // Bronze Cudgels: "the number of times this ability has resolved this turn".
     case 'ability_resolutions':
@@ -602,9 +601,7 @@ function count(ctx: EffectContext, e: AmountExpr): number {
       // Chandra, Fire of Kaladesh: "If Chandra has dealt 3 or more damage this turn" — counting what this ability just dealt.
       const s = ctx.source;
       if (!s) return 0;
-      const zcc = ctx.sourceZcc ?? s.zcc;
-      const fresh = unrecorded(ctx.events);
-      return (g.turnLog.dealtDamage?.[`${s.id}:${zcc}`] ?? 0) + fresh.reduce((n, ev) => n + (ev.type === 'damage' && ev.source === s.id && (ev.sourceZcc ?? s.zcc) === zcc ? ev.amount : 0), 0);
+      return dealtBy(g, { id: s.id, zcc: ctx.sourceZcc ?? s.zcc }, false, unrecorded(ctx.events)).reduce((n, d) => n + d.amount, 0);
     }
     case 'discover_shortfall': {
       // Hit the Mother Lode: "If the discovered card's mana value is less than 10, … equal to the difference."
@@ -630,14 +627,12 @@ function count(ctx: EffectContext, e: AmountExpr): number {
     // Haliya: "the life you've gained this turn"; Neheb: "the life your opponents have lost this turn".
     case 'life_this_turn': {
       const damage = e.stat === 'damage' || e.stat === 'noncombat_damage';
-      const log = e.stat === 'damage' ? g.turnLog.damageTaken : g.turnLog.noncombatDamageTaken;
       // Archfiend of Despair: "the life that player lost this turn".
       const players = e.player ? refPlayers(ctx, e.player) : e.who === 'you' ? [ctx.controller] : e.who === 'a_player' ? [...g.order] : g.order.filter((p) => p !== ctx.controller);
       // Counting what this resolution has just done too (CR 608.2h) — Essence Pulse: "You gain 2 life. Each creature gets
       // -X/-X until end of turn, where X is the amount of life you gained this turn."
       const fresh = unrecorded(ctx.events);
-      const dealt = (p: PlayerId): number => (log?.[p] ?? 0) + fresh.reduce((n, ev) => n + (ev.type === 'damage' && ev.to.kind === 'player' && ev.to.player === p && (e.stat === 'damage' || !ev.combat) ? ev.amount : 0), 0);
-      const each = players.map((p) => (damage ? dealt(p) : lifeChange(g, p, e.stat === 'lost' ? -1 : 1, false, fresh)));
+      const each = players.map((p) => (damage ? damageTaken(g, p, false, fresh, e.stat === 'noncombat_damage') : lifeChange(g, p, e.stat === 'lost' ? -1 : 1, false, fresh)));
       return e.who === 'an_opponent' || e.who === 'a_player' ? Math.max(0, ...each) : each.reduce((n, v) => n + v, 0);
     }
     case 'discarded_this_way': {
@@ -702,7 +697,7 @@ function count(ctx: EffectContext, e: AmountExpr): number {
     case 'attacks_this_turn': {
       // Moraug: "for each time it has attacked this turn" — as this object (CR 400.7).
       const [o] = refObjects(ctx, e.of);
-      return o && g.turnLog.attackedAs?.[o.id] === o.zcc ? (g.turnLog.attacks?.[o.id] ?? 0) : 0;
+      return o ? attacksBy(g, o, unrecorded(ctx.events)).length : 0;
     }
     case 'counters_removed':
       // Coalition Relic: "for each charge counter removed this way"; Molten Hydra: those its cost removed.
@@ -730,7 +725,7 @@ function count(ctx: EffectContext, e: AmountExpr): number {
       return ctx.resolution?.lifeLost ?? 0;
     case 'opponents_attacked': {
       // Rose, Cutthroat Raider: "for each opponent you attacked" (this turn).
-      if (e.thisTurn) return (g.turnLog.playersAttackedBy?.[ctx.controller] ?? []).filter((p) => p !== ctx.controller).length;
+      if (e.thisTurn) return new Set(attacksMade(g, false, unrecorded(ctx.events)).flatMap((a) => (a.was && a.by === ctx.controller && a.target.kind === 'player' && a.target.player !== ctx.controller ? [a.target.player] : []))).size;
       // CR 702.121a: opponents (not planeswalkers or battles) you attacked with a creature this combat.
       const attacked = new Set<string>();
       for (const [id, a] of Object.entries(g.combat?.attackers ?? {})) {

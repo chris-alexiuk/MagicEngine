@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { chars, viewFor } from '../src/index.js';
 import type { GameState } from '../src/index.js';
-import { act, actWithEvents, give, makeCard, start, toStep } from './helpers.js';
+import { act, actWithEvents, discardedEarlier, give, makeCard, start, toStep } from './helpers.js';
 import { moveObject } from '../src/zones.js';
 
 const CARDS = [
@@ -307,7 +307,7 @@ describe('staples (slice 270, part 2)', () => {
   it("Recalibrate draws only if you've discarded a card this turn", () => {
     for (const discarded of [false, true]) {
       let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
-      if (discarded) g.turnLog.discarded = [{ id: 'x', zcc: 0, player: 'alice' }] as never;
+      if (discarded) discardedEarlier(g, 'alice');
       const ogre = give(g, 'bob', 'Ogre', 'battlefield');
       const hand = g.zones.hand.alice!.length;
       g = cast(g, 'alice', 'Recalibrate Lite', { targets: [[{ kind: 'object', object: ogre }]] });

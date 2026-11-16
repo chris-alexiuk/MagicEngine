@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { chars, legalActions } from '../src/index.js';
 import type { GameState } from '../src/index.js';
-import { act, actWithEvents, give, illegal, lifeChangedEarlier, makeCard, sacrificedEarlier, start, toStep } from './helpers.js';
+import { act, actWithEvents, discardedEarlier, give, illegal, lifeChangedEarlier, makeCard, sacrificedEarlier, start, toStep } from './helpers.js';
 import { maxHandSize } from '../src/player-rules.js';
 import { moveObject } from '../src/zones.js';
 
@@ -7115,7 +7115,7 @@ describe('Sieges', () => {
     it(`The Raven Man: a Bird ${discard ? 'when' : 'only if'} a player discarded this turn`, () => {
       let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
       give(g, 'alice', 'Raven Man Lite', 'battlefield');
-      if (discard) g.turnLog.discarded = [{ id: g.zones.hand.bob![0]!, zcc: 0, player: 'bob' }];
+      if (discard) discardedEarlier(g, 'bob');
       const n = g.zones.battlefield.length;
       g = settle(toStep(g, 'end', 'alice'));
       expect(g.zones.battlefield.length - n).toBe(discard ? 1 : 0);
