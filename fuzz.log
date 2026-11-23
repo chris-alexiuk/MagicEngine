@@ -1,0 +1,56 @@
+
+> magic-engine@ fuzz /home/runner/work/MagicEngine/MagicEngine
+> pnpm --filter @mtg/engine fuzz -- ../../apps/web/public/cards.json.gz --as-is --jobs 4 --games 120 --probe 40 --seed 211 --report-unlisted
+
+
+> @mtg/engine@0.1.0 fuzz /home/runner/work/MagicEngine/MagicEngine/packages/engine
+> tsx scripts/fuzz.ts -- ../../apps/web/public/cards.json.gz --as-is --jobs 4 --games 120 --probe 40 --seed 211 --report-unlisted
+
+--- job 1 of 4
+30 games, 1113 turns, 38057 actions in 281.1 s (7.39 ms/action)
+  slowest action: 16 ms (game 5) 
+  triggers 180, auto-resolved 912, manual 26, fizzled 3, tokens 62
+  X: 11 casts and activations with X above 0 (of 11 tried)
+  crash: 0
+  rejected: 0
+  invariant: 0
+  unlisted: 0 (looked for in 932 states)
+--- job 2 of 4
+30 games, 1134 turns, 37768 actions in 276.9 s (7.33 ms/action)
+  slowest action: 34 ms (game 12) 
+  triggers 201, auto-resolved 766, manual 28, fizzled 1, tokens 20
+  X: 1 casts and activations with X above 0 (of 1 tried)
+  crash: 0
+  rejected: 0
+  invariant: 0
+  unlisted: 0 (looked for in 923 states)
+--- job 3 of 4
+30 games, 1158 turns, 38065 actions in 280.9 s (7.38 ms/action)
+  slowest action: 36 ms (game 21) 
+  triggers 195, auto-resolved 766, manual 30, fizzled 0, tokens 47
+  X: 0 casts and activations with X above 0 (of 0 tried)
+  crash: 0
+  rejected: 0
+  invariant: 0
+  unlisted: 0 (looked for in 932 states)
+--- job 4 of 4
+30 games, 1197 turns, 39691 actions in 290.9 s (7.33 ms/action)
+  slowest action: 33 ms (game 23) 
+  triggers 277, auto-resolved 933, manual 18, fizzled 7, tokens 41
+  X: 0 casts and activations with X above 0 (of 0 tried)
+  crash: 0
+  rejected: 0
+  invariant: 1
+    ×1 CR 800.4a: When a player has left the game, nothing they own or control is on the battlefield or the stack. — Plains (o43) is on the battlefield though p1 has l
+        e.g. game 7: {"type":"pass","player":"p1"}
+  unlisted: 0 (looked for in 970 states)
+--- all 4 jobs
+120 games, 4602 turns, 153581 actions in 292.5 s (7.36 ms/action in each job)
+  crash: 0
+  rejected: 0
+  invariant: 1
+  unlisted: 0 (looked for in 3757 states)
+/home/runner/work/MagicEngine/MagicEngine/packages/engine:
+ ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL  @mtg/engine@0.1.0 fuzz: `tsx scripts/fuzz.ts -- ../../apps/web/public/cards.json.gz --as-is --jobs 4 --games 120 --probe 40 --seed 211 --report-unlisted`
+Exit status 1
+ ELIFECYCLE  Command failed with exit code 1.

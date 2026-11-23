@@ -1,0 +1,23 @@
+
+> magic-engine@ grammar:wording /home/runner/work/MagicEngine/MagicEngine
+> pnpm --filter @mtg/compiler mutate -- ../../apps/web/public/cards.json.gz 600 --check
+
+
+> @mtg/compiler@0.1.0 mutate /home/runner/work/MagicEngine/MagicEngine/packages/compiler
+> tsx scripts/mutate.ts -- ../../apps/web/public/cards.json.gz 600 --check
+
+  600 / 600   100.0%  a number (3 damage → 4 damage)
+  579 / 600    96.5%  a number word (two → three)
+  395 / 395   100.0%  a bonus (+1/+1 → +2/+2 until end of turn)
+  600 / 600   100.0%  a mana amount ({2} → {3})
+  599 / 600    99.8%  a color (red → green)
+  594 / 600    99.0%  a keyword (flying → trample)
+  592 / 600    98.7%  a creature type (Elf → Goblin)
+  594 / 600    99.0%  a card type (artifact → enchantment)
+  506 / 600    84.3%  whose (you control → you don't control)
+  563 / 600    93.8%  which player (each opponent → each player)
+  597 / 600    99.5%  how long (until end of turn → until your next turn)
+  593 / 600    98.8%  a counter (+1/+1 counter → -1/-1 counter)
+  587 / 600    97.8%  optional (… → you may …)
+  592 / 600    98.7%  a trigger's condition (…, do X → …, if you control a creature, do X)
+wording test: no kind more than 1.5 points below its score on record

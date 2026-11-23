@@ -1,0 +1,16 @@
+{
+  "schema": 2,
+  "builtAt": "2026-11-23T09:27:31.539Z",
+  "sourceUpdatedAt": "2026-11-22T22:01:57.207+00:00",
+  "printingsUpdatedAt": "2026-11-22T22:06:24.679+00:00",
+  "compiler": "c3cc7bc8b7b36b089ee4f59fe78e0cb2",
+  "cardCount": 32976,
+  "tokenCount": 1109,
+  "bytes": 7680980,
+  "sha256": "93e513fa39f704b4b62e98591b30edf0399d75a364bdc972ac29bd577ea6f1a7",
+  "coverage": {
+    "full": 26442,
+    "partial": 4024,
+    "manual": 2510
+  }
+}
